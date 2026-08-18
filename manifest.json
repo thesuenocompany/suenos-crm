@@ -1,0 +1,16 @@
+{
+  "name": "Sueños Tequila CRM",
+  "short_name": "Sueños CRM",
+  "description": "Field CRM for the Sueños Tequila sales team — accounts, visits, orders, and ad campaigns.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f3d3d",
+  "theme_color": "#0f3d3d",
+  "icons": [
+    { "src": "https://dowfjjthshbbgnvwxzjv.supabase.co/storage/v1/object/public/brand-assets/pwa/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "https://dowfjjthshbbgnvwxzjv.supabase.co/storage/v1/object/public/brand-assets/pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "https://dowfjjthshbbgnvwxzjv.supabase.co/storage/v1/object/public/brand-assets/pwa/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

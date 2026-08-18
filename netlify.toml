@@ -1,0 +1,21 @@
+# Netlify build config for the Sueños CRM.
+# Netlify runs the assembler to build index.html, then publishes only the
+# static app shell from dist/ (source files and SQL are never served).
+[build]
+  command = "bash build.sh"
+  publish = "dist"
+
+[build.environment]
+  PYTHON_VERSION = "3.11"
+
+# Never let the browser hard-cache the app shell — the service worker + Netlify
+# should always hand out the newest deploy.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
