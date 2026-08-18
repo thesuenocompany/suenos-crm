@@ -1,6 +1,8 @@
-import re, sys
+import re, sys, os
 
-BASE = '/sessions/wizardly-festive-mccarthy/mnt/outputs'
+# Resolve source files relative to this script so the build works anywhere
+# (local sandbox, Netlify's /opt/build/repo, etc.) — never a hardcoded path.
+BASE = os.path.dirname(os.path.abspath(__file__)) or '.'
 
 # Read source files
 with open(f'{BASE}/suenos-crm-cloud-part1.js') as f: cloud1 = f.read()
