@@ -160,7 +160,7 @@ function VoiceVisitModal({ onClose }) {
     if (!form.accountId) { showToast(dispatch, 'Pick which account this was', 'error'); return; }
     setBusy(true);
     try {
-      const visit = { id: genId(), accountId: form.accountId, date: form.date || today(), contact: form.contact || '', type: form.type || 'Drop-in', outcome: form.outcome || '', notes: form.notes || '', followUpDate: form.followUpDate || '', repId: state.user.id, checks: {} };
+      const visit = { id: genId(), accountId: form.accountId, date: form.date || today(), contact: form.contact || '', type: form.type || 'Drop-in', outcome: form.outcome || '', notes: form.notes || '', followUpDate: form.followUpDate || '', repId: state.user.id, checks: {}, source: 'voice' };
       await db.dbAddVisit(dispatch, visit);
       const acc = state.accounts.find(a => a.id === form.accountId);
       if (acc) await db.dbUpdAccount(dispatch, { ...acc, lastVisit: visit.date });

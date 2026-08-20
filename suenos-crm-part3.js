@@ -2540,6 +2540,7 @@ function VisitList() {
                     <div>
                       <span className="text-sm font-semibold text-gray-900 dark:text-white">{acc?.name||'Unknown'}</span>
                       <span className="ml-2 text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 px-1.5 py-0.5 rounded">{v.type}</span>
+                      {v.source==='voice' && <span className="ml-1.5 text-xs bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 px-1.5 py-0.5 rounded" title="Logged by voice">🎤 Voice</span>}
                     </div>
                     <span className="text-xs text-gray-400 flex-shrink-0">{fmtDate(v.date)}</span>
                   </div>

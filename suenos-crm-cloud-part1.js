@@ -101,7 +101,7 @@ function mapAccount(r) {
 function mapVisit(r) {
   return { id:r.id, accountId:r.account_id, date:r.date, contact:r.contact||'',
     type:r.type||'Follow Up', notes:r.notes||'', outcome:r.outcome||'',
-    followUpDate:r.follow_up_date, repId:r.rep_id, checks:r.checks||{} };
+    followUpDate:r.follow_up_date, repId:r.rep_id, checks:r.checks||{}, source:r.source||'' };
 }
 function mapOrder(r) {
   return { id:r.id, accountId:r.account_id, productId:r.product_id, bottles:r.bottles,
@@ -939,7 +939,7 @@ async function dbAddVisit(dispatch, visit) {
     id:visit.id, account_id:visit.accountId, date:visit.date,
     contact:visit.contact, type:visit.type, notes:visit.notes,
     outcome:visit.outcome, follow_up_date:visit.followUpDate||null,
-    rep_id:visit.repId, checks:visit.checks||{},
+    rep_id:visit.repId, checks:visit.checks||{}, source:visit.source||null,
   });
   if (error) console.error(error);
 }
