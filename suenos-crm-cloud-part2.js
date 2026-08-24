@@ -725,11 +725,16 @@ function NewOrder() {
   const unitPrice    = provincePrice ?? parseFloat(selProd?.price || 0);
   const qty          = parseInt(form.bottles) || 0;
   const subtotal     = parseFloat((unitPrice * qty).toFixed(2));
-  const pstRate      = provinceTax ? provinceTax.pstRate   : ((tax.pstRate  > 0) ? tax.pstRate  : 7);
+  const pstRate      = provinceTax ? provinceTax.pstRate   : (Number(tax.pstRate) || 0);
   const gstRate      = provinceTax ? provinceTax.gstRate   : ((tax.gstRate  > 0) ? tax.gstRate  : 5);
   const pstLabel     = provinceTax ? (provinceTax.pstLabel || 'PST') : 'PST';
   const gstLabel     = provinceTax ? (provinceTax.gstLabel || 'GST') : 'GST';
-  const pstAmt       = tax.enabled ? parseFloat((subtotal * pstRate / 100).toFixed(2)) : 0;
+  // PST exemption: a PST number (entered here or on file) — or an admin override
+  // on the account — exempts PST, matching the final invoice logic.
+  const orderPstNumber = (form.pstNumber || selAcc?.pstNumber || '').trim();
+  const pstOverride    = (selAcc?.pstOverride || '').trim();
+  const pstExempt      = pstOverride === 'exempt' ? true : pstOverride === 'charge' ? false : !!orderPstNumber;
+  const pstAmt       = (tax.enabled && !pstExempt) ? parseFloat((subtotal * pstRate / 100).toFixed(2)) : 0;
   const gstAmt       = tax.enabled ? parseFloat((subtotal * gstRate / 100).toFixed(2)) : 0;
   const total        = parseFloat((subtotal + pstAmt + gstAmt).toFixed(2));
   const hasTax       = tax.enabled && unitPrice > 0 && qty > 0;
