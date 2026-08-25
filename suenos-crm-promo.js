@@ -4,6 +4,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 const PM_ORDER_STATUSES = ['Draft','Submitted','Under Review','Approved','Partially Approved','Preparing','Shipped','Delivered','Cancelled','Declined'];
+const PM_FULFILLMENT = ['Pending','Shipped','Delivered','Backordered'];
 const PM_UOM = ['Each','Pack','Case','Box','Bundle'];
 const PM_AVAIL = {
   in_stock:      { label:'In stock',       cls:'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
@@ -1047,8 +1048,10 @@ function PromoOrdersAdminView() {
 }
 
 // ── Order detail (shared; admin gets controls) ───────────────────────────────
-function PromoOrderDetail({ order, isAdmin, onClose }) {
+function PromoOrderDetail({ order: orderProp, isAdmin, onClose }) {
   const { state, dispatch } = useApp();
+  // Re-read the order from state so per-line fulfillment changes show live (no re-open).
+  const order = (state.promoOrders||[]).find(o=>o.id===orderProp.id) || orderProp;
   const [busy, setBusy] = React.useState(false);
   const [status, setStatus] = React.useState(order.status);
   const [statusNote, setStatusNote] = React.useState('');
@@ -1085,6 +1088,18 @@ function PromoOrderDetail({ order, isAdmin, onClose }) {
       showToast(dispatch, 'Line quantities updated — set overall status above');
       onClose();
     } catch(e) { showToast(dispatch, String(e.message||e), 'error'); }
+    finally { setBusy(false); }
+  }
+  async function setLineFulfillment(itemId, fStatus) {
+    setBusy(true);
+    try { await dbSetPromoLineFulfillment(itemId, fStatus); await dbLoadPromo(dispatch, true); }
+    catch(e){ showToast(dispatch, String(e.message||e), 'error'); }
+    finally { setBusy(false); }
+  }
+  async function setAllFulfillment(fStatus) {
+    setBusy(true);
+    try { await dbSetPromoOrderFulfillment(order.id, fStatus); await dbLoadPromo(dispatch, true); showToast(dispatch, `All items marked ${fStatus}`); }
+    catch(e){ showToast(dispatch, String(e.message||e), 'error'); }
     finally { setBusy(false); }
   }
   async function duplicateToDraft() {
@@ -1131,6 +1146,13 @@ function PromoOrderDetail({ order, isAdmin, onClose }) {
                 <input type="number" min={0} max={i.quantityRequested} value={approvals[i.id]} onChange={e=>setApprovals(a=>({...a,[i.id]:e.target.value}))} className="w-16 px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900" title="Approved qty"/>
               )}
               {showCost && <span className="text-xs text-gray-500 w-16 text-right">{pmMoney(i.unitCost*(i.quantityApproved!=null?i.quantityApproved:i.quantityRequested))}</span>}
+              {isAdmin
+                ? <select value={i.fulfillmentStatus||'Pending'} disabled={busy} onChange={e=>setLineFulfillment(i.id, e.target.value)} title="Fulfillment"
+                    className="text-[11px] px-1.5 py-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">
+                    {PM_FULFILLMENT.map(f=><option key={f} value={f}>{f}</option>)}
+                  </select>
+                : (i.fulfillmentStatus && i.fulfillmentStatus!=='Pending' &&
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">{i.fulfillmentStatus}</span>)}
             </div>
           ))}
           {showCost && <div className="flex justify-between text-sm font-bold pt-1"><span>Total</span><span>{pmMoney(total)}</span></div>}
@@ -1142,6 +1164,12 @@ function PromoOrderDetail({ order, isAdmin, onClose }) {
         {/* Admin controls */}
         {isAdmin ? (
           <div className="space-y-3 border-t border-gray-100 dark:border-gray-800 pt-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide mr-1">Fulfillment</span>
+              <Btn size="sm" variant="secondary" disabled={busy} onClick={()=>setAllFulfillment('Shipped')}>📦 Mark all shipped</Btn>
+              <Btn size="sm" variant="secondary" disabled={busy} onClick={()=>setAllFulfillment('Delivered')}>✅ Mark all delivered</Btn>
+              <span className="text-[11px] text-gray-400">or set each item above</span>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <FSelect label="Status" value={status} onChange={setStatus} options={PM_ORDER_STATUSES}/>
               <FInput label="Status note (visible to rep)" value={statusNote} onChange={setStatusNote}/>

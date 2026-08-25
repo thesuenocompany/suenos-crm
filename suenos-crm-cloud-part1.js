@@ -1701,7 +1701,7 @@ function mapPmOrder(r) {
       sku:it.sku_snapshot||'', variantLabel:it.variant_label||'', unitCost:parseFloat(it.unit_cost_snapshot||0),
       quantityRequested:it.quantity_requested||0, quantityApproved:it.quantity_approved,
       quantityShipped:it.quantity_shipped, lineCost:parseFloat(it.line_cost||0),
-      status:it.status||'Requested', adminNote:it.admin_note||'',
+      status:it.status||'Requested', fulfillmentStatus:it.fulfillment_status||'Pending', adminNote:it.admin_note||'',
       categoryIdSnapshot:it.category_id_snapshot||null, categoryNameSnapshot:it.category_name_snapshot||'',
     })),
   };
@@ -1786,6 +1786,14 @@ async function dbApprovePromoLine(itemId, qtyApproved, status, note) {
 }
 async function dbSetPromoAdminNotes(orderId, notes) {
   await sb.from('pm_orders').update({ internal_admin_notes: notes, updated_at:new Date().toISOString() }).eq('id', orderId);
+}
+async function dbSetPromoLineFulfillment(itemId, status) {
+  const { error } = await sb.rpc('pm_set_line_fulfillment', { p_item_id: itemId, p_status: status });
+  if (error) throw new Error(error.message);
+}
+async function dbSetPromoOrderFulfillment(orderId, status) {
+  const { error } = await sb.rpc('pm_set_order_fulfillment', { p_order_id: orderId, p_status: status });
+  if (error) throw new Error(error.message);
 }
 // Write a category audit entry (admin-only via RLS). Best-effort.
 async function dbLogCategoryAudit(action, { categoryId, materialId, prev, next }) {
