@@ -2652,6 +2652,7 @@ function EditOrderModal({ order, onClose }) {
     licenseNumber: order.licenseNumber||'',
     orderedBy:     order.orderedBy||'',
     billingEmail:  order.billingEmail||'',
+    pstNumber:     order.pstNumber||'',
   });
   const [saving, setSaving] = useState(false);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
@@ -2661,7 +2662,19 @@ function EditOrderModal({ order, onClose }) {
     e.preventDefault();
     setSaving(true);
     try {
-      await dbUpdOrder(dispatch, { ...order, ...form, bottles: parseInt(form.bottles) });
+      // PST exemption: a PST number on the order (or an account "force exempt") zeroes PST.
+      const pstEntered = (form.pstNumber||'').trim();
+      const subtotal   = Number(order.subtotal)||0;
+      const gst        = Number(order.gstAmount)||0;
+      const exempt     = !!pstEntered || acc?.pstOverride==='exempt';
+      const pstAmount  = exempt ? 0 : (Number(order.pstAmount)||0);
+      const total      = parseFloat((subtotal + gst + pstAmount).toFixed(2));
+      await dbUpdOrder(dispatch, { ...order, ...form, bottles: parseInt(form.bottles), pstNumber: pstEntered, pstAmount, total });
+      // Save the PST number back to the account so future orders are exempt too.
+      if (acc && pstEntered && pstEntered !== (acc.pstNumber||'').trim()) {
+        await dbUpdAccount(dispatch, { ...acc, pstNumber: pstEntered });
+        showToast(dispatch, 'PST number saved to '+(acc.name||'account'));
+      }
       showToast(dispatch, 'Order updated');
       onClose();
     } catch(err) {
@@ -2738,6 +2751,10 @@ function EditOrderModal({ order, onClose }) {
           <div>
             <label style={lStyle}>Billing Email</label>
             <input type="email" value={form.billingEmail} onChange={e=>set('billingEmail',e.target.value)} style={iStyle} placeholder="billing@store.com"/>
+          </div>
+          <div>
+            <label style={lStyle}>PST Number <span style={{fontWeight:400,textTransform:'none',color:'#9ca3af'}}>— on file → PST exempt · also saved to the account</span></label>
+            <input value={form.pstNumber} onChange={e=>set('pstNumber',e.target.value)} style={iStyle} placeholder="e.g. 10125412 — leave blank to charge PST"/>
           </div>
           <div>
             <label style={lStyle}>Notes</label>
