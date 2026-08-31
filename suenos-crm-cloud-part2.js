@@ -680,7 +680,7 @@ function NewOrder() {
     return '';
   }
 
-  const [form, setForm] = useState({accountId:prefillAcc,productId:'',bottles:'',requestedDate:today(),storeId:'',notes:'',licenseNumber:'',liquorLicenseName:'',orderedBy:'',billingEmail:'',pstNumber:'',province:''});
+  const [form, setForm] = useState({accountId:prefillAcc,productId:'',bottles:'',requestedDate:today(),storeId:'',notes:'',storeNote:'',licenseNumber:'',liquorLicenseName:'',orderedBy:'',billingEmail:'',pstNumber:'',province:''});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const [invoiceOrder, setInvoiceOrder] = useState(null);
   const tax = state.taxSettings || { enabled:true, pstRate:10, gstRate:7 };
@@ -788,6 +788,7 @@ function NewOrder() {
           bill_to_address:    [acc?.address, acc?.city, acc?.region].filter(Boolean).join(', '),
           bill_to_license:    form.licenseNumber || acc?.licenseNumber || '',
           bill_to_pst:        order.pstNumber || '',
+          store_note:         form.storeNote || '',
           store_name:         store?.name || '',
           store_address:      store?.address || '',
           store_license:      store?.licenseNumber || '',
@@ -881,6 +882,7 @@ function NewOrder() {
         )}
         <FInput label="Billing Email" value={form.billingEmail} onChange={v=>set('billingEmail',v)} placeholder="billing@store.com" type="email"/>
         <FInput label="Notes" value={form.notes} onChange={v=>set('notes',v)} rows={2}/>
+        <FInput label="Note to store (in the order email — not on the invoice)" value={form.storeNote} onChange={v=>set('storeNote',v)} rows={2} placeholder="e.g. Hold for pickup Friday · call before delivery"/>
         {form.bottles && <div className="p-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 text-xs text-teal-800 dark:text-teal-400">{form.bottles} bottles = {(parseInt(form.bottles)/12).toFixed(1)} cases</div>}
         {/* Invoice / Order Summary */}
         {hasTax && (

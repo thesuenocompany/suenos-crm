@@ -2653,6 +2653,7 @@ function EditOrderModal({ order, onClose }) {
     orderedBy:     order.orderedBy||'',
     billingEmail:  order.billingEmail||'',
     pstNumber:     order.pstNumber||'',
+    storeNote:     order.storeNote||'',
   });
   const [saving, setSaving] = useState(false);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
@@ -2759,6 +2760,10 @@ function EditOrderModal({ order, onClose }) {
           <div>
             <label style={lStyle}>Notes</label>
             <textarea value={form.notes} onChange={e=>set('notes',e.target.value)} style={{...iStyle,resize:'vertical',minHeight:60}} rows={2}/>
+          </div>
+          <div>
+            <label style={lStyle}>Note to store <span style={{fontWeight:400,textTransform:'none',color:'#9ca3af'}}>— in the order email, not on the invoice</span></label>
+            <textarea value={form.storeNote} onChange={e=>set('storeNote',e.target.value)} style={{...iStyle,resize:'vertical',minHeight:50}} rows={2} placeholder="e.g. Hold for pickup Friday"/>
           </div>
           {form.bottles && <div className="p-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 text-xs text-teal-800 dark:text-teal-400">{form.bottles} bottles = {(parseInt(form.bottles)/12).toFixed(1)} cases</div>}
           <div className="flex gap-2 pt-1">

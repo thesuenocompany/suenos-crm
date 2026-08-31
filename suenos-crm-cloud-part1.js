@@ -106,7 +106,7 @@ function mapVisit(r) {
 function mapOrder(r) {
   return { id:r.id, accountId:r.account_id, productId:r.product_id, bottles:r.bottles,
     requestedDate:r.requested_date, storeId:r.store_id, status:r.status,
-    notes:r.notes||'', repId:r.rep_id, createdAt:r.created_at?.slice(0,10)||today(),
+    notes:r.notes||'', storeNote:r.store_note||'', repId:r.rep_id, createdAt:r.created_at?.slice(0,10)||today(),
     licenseNumber:r.license_number||'', orderedBy:r.ordered_by||'', billingEmail:r.billing_email||'',
     pstNumber:r.pst_number||'', subtotal:r.subtotal||0,
     pstAmount:r.pst_amount||0, gstAmount:r.gst_amount||0, total:r.total||0 };
@@ -951,6 +951,7 @@ async function dbAddOrder(dispatch, order) {
     id:order.id, account_id:order.accountId, product_id:order.productId,
     bottles:order.bottles, requested_date:order.requestedDate||null,
     store_id:order.storeId, status:order.status, notes:order.notes,
+    store_note:order.storeNote||null,
     rep_id:order.repId, license_number:order.licenseNumber||null,
     ordered_by:order.orderedBy||null, billing_email:order.billingEmail||null,
     pst_number:order.pstNumber||null, subtotal:order.subtotal||0,
@@ -1016,6 +1017,7 @@ async function dbUpdOrder(dispatch, order) {
     ordered_by:     order.orderedBy||null,
     billing_email:  order.billingEmail||null,
     account_id:     order.accountId||null,
+    store_note:     order.storeNote||null,
     pst_number:     order.pstNumber||null,
     subtotal:       order.subtotal||0,
     pst_amount:     order.pstAmount||0,
