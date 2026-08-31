@@ -120,6 +120,7 @@ function mapStore(r) {
   return { id:r.id, name:r.name, address:r.address, contact:r.contact,
     email:r.email, phone:r.phone, region:r.region,
     licenseNumber: r.license_number || '', gstNumber: r.gst_number || '',
+    etransferAddress: r.etransfer_address || '',
     province: r.province || '' };
 }
 function mapTask(r) {
@@ -1149,11 +1150,11 @@ async function dbDelStore(dispatch, id) {
 }
 async function dbAddStore(dispatch, store) {
   dispatch({type:'ADD_STORE', payload:store});
-  await sb.from('stores').insert({ id:store.id, name:store.name, address:store.address, contact:store.contact, email:store.email, phone:store.phone, region:store.region, license_number:store.licenseNumber||null, gst_number:store.gstNumber||null, province:store.province||null });
+  await sb.from('stores').insert({ id:store.id, name:store.name, address:store.address, contact:store.contact, email:store.email, phone:store.phone, region:store.region, license_number:store.licenseNumber||null, gst_number:store.gstNumber||null, etransfer_address:store.etransferAddress||null, province:store.province||null });
 }
 async function dbUpdStore(dispatch, store) {
   dispatch({type:'UPD_STORE', payload:store});
-  await sb.from('stores').update({ name:store.name, address:store.address, contact:store.contact, email:store.email, phone:store.phone, region:store.region, license_number:store.licenseNumber||null, gst_number:store.gstNumber||null, province:store.province||null }).eq('id', store.id);
+  await sb.from('stores').update({ name:store.name, address:store.address, contact:store.contact, email:store.email, phone:store.phone, region:store.region, license_number:store.licenseNumber||null, gst_number:store.gstNumber||null, etransfer_address:store.etransferAddress||null, province:store.province||null }).eq('id', store.id);
 }
 async function dbAddSales(dispatch, rows) {
   dispatch({type:'ADD_SALES', payload:rows});

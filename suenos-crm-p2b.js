@@ -1592,6 +1592,8 @@ function buildInvoiceHTML({ invoiceNum, invoiceDate, acc, prod, store, tax, foot
     `<tr class="total-row"><td>${gstLabelStr} (${gstRate}%)</td><td class="amount">$${gstAmt.toFixed(2)}</td></tr>`,
   ].join('') : '') + depositRow;
 
+  const storeEtransfer = store?.etransferAddress || '';
+  const footerEtransfer = storeEtransfer ? `<p style="margin-bottom:6px"><strong>Payment by e-transfer to:</strong> ${storeEtransfer}</p>` : '';
   const footerGst  = storeGst  ? `<p>GST Registration #: ${storeGst}</p>` : '';
   const footerText = footer    ? `<p style="margin-bottom:6px">${footer.replace(/\n/g,'<br>')}</p>` : '';
 
@@ -1662,6 +1664,7 @@ tr.grand-total td{border-top:2px solid #111;padding-top:10px;font-size:16px;font
     <tr class="grand-total"><td>Total</td><td class="amount">$${total.toFixed(2)}</td></tr>
   </table>
   <div class="footer-section">
+    ${footerEtransfer}
     ${footerText}
     ${footerGst}
   </div>

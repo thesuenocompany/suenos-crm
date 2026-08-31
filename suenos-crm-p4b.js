@@ -904,7 +904,7 @@ function StoresView() {
   const { state, dispatch } = useApp();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const blank = { name:'', address:'', contact:'', email:'', phone:'', region:'', licenseNumber:'', gstNumber:'', province:'' };
+  const blank = { name:'', address:'', contact:'', email:'', phone:'', region:'', licenseNumber:'', gstNumber:'', etransferAddress:'', province:'' };
   const [form, setForm] = useState(blank);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   async function save() {
@@ -972,6 +972,7 @@ function StoresView() {
             <FInput label="Liquor License #" value={form.licenseNumber} onChange={v=>set('licenseNumber',v)} placeholder="Store liquor license number"/>
             <FInput label="GST Registration #" value={form.gstNumber} onChange={v=>set('gstNumber',v)} placeholder="Store GST number"/>
           </div>
+          <FInput label="E-transfer address (shown on invoices)" value={form.etransferAddress} onChange={v=>set('etransferAddress',v)} placeholder="e.g. payments@store.com"/>
           <div className="flex gap-2 pt-1">
             <Btn variant="secondary" onClick={()=>setOpen(false)} cls="flex-1">Cancel</Btn>
             <Btn onClick={save} cls="flex-1" disabled={!form.name||!form.email}>Save Store</Btn>
