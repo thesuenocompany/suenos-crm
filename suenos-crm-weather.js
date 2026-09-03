@@ -279,11 +279,13 @@ function WeatherRuleModal({ rule, onClose, onSaved }) {
 
 // ── Main view ────────────────────────────────────────────────────────────────
 function WeatherAdsView() {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const [rules, setRules] = React.useState([]);
   const [control, setControl] = React.useState([]);
   const [approvals, setApprovals] = React.useState([]);
+  const [lastRun, setLastRun] = React.useState({});   // ruleId -> latest run row
   const [loading, setLoading] = React.useState(true);
+  const [checking, setChecking] = React.useState(null); // 'all' | ruleId | null
   const [err, setErr] = React.useState('');
   const [editRule, setEditRule] = React.useState(null);   // null | {} (new) | rule
   const [checkRule, setCheckRule] = React.useState(null);
@@ -298,14 +300,49 @@ function WeatherAdsView() {
       setControl(ctrl||[]);
       const { data:appr } = await sb.from('automation_approvals').select('*').eq('status','pending').order('created_at',{ascending:false});
       setApprovals(appr||[]);
+      // latest run per rule (recent window; first row per rule wins since ordered desc)
+      const { data:runs } = await sb.from('automation_runs').select('rule_id,checked_at,condition_met,decision,note').order('checked_at',{ascending:false}).limit(300);
+      const byRule = {}; (runs||[]).forEach(x => { if (!byRule[x.rule_id]) byRule[x.rule_id] = x; });
+      setLastRun(byRule);
     } catch (e) { setErr(e.message || String(e)); }
     setLoading(false);
   };
   React.useEffect(() => { load(); }, []);
 
+  // Phase 2 — run the server-side engine (evaluate + log + recommend). No Meta.
+  const runChecks = async (ruleId) => {
+    setChecking(ruleId || 'all');
+    try {
+      const { data, error } = await sb.functions.invoke('weather-rules-check', { body: ruleId ? { ruleId } : {} });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Check failed');
+      const res = data.results || [];
+      const met = res.filter(x=>x.met).length;
+      const recs = res.filter(x=>x.decision==='recommend').length;
+      const errs = res.filter(x=>x.decision==='error');
+      if (errs.length) showToast(dispatch, `${errs.length} rule(s) errored: ${errs[0].error}`, 'error');
+      else if (!res.length) showToast(dispatch, ruleId ? 'Rule checked' : 'No active rules to check');
+      else showToast(dispatch, `Checked ${res.length} · ${met} met · ${recs} new recommendation${recs===1?'':'s'}`);
+      await load();
+    } catch (e) { showToast(dispatch, 'Check failed: '+(e.message||e), 'error'); }
+    setChecking(null);
+  };
+
+  const ignoreApproval = async (a) => {
+    try {
+      const { error } = await sb.from('automation_approvals').update({ status:'ignored', decided_by:state.user.id, decided_at:new Date().toISOString() }).eq('id', a.id);
+      if (error) throw error;
+      await sb.from('automation_events').insert({ rule_id:a.rule_id, event_type:'ignored', detail:a.headline, actor:state.user.id });
+      showToast(dispatch, 'Recommendation dismissed');
+      await load();
+    } catch (e) { showToast(dispatch, 'Failed: '+(e.message||e), 'error'); }
+  };
+
   const ctrlFor = id => control.find(c => c.target_id === id);
   const activeCount = rules.filter(r=>r.active).length;
   const controlledCount = control.filter(c=>c.controlling_rule_id).length;
+  const lastCheckedAt = Object.values(lastRun).map(x=>x.checked_at).sort().slice(-1)[0];
+  const fmtWhen = ts => { if(!ts) return null; const d=new Date(ts), m=Math.round((Date.now()-d)/60000); if(m<1) return 'just now'; if(m<60) return m+'m ago'; if(m<1440) return Math.round(m/60)+'h ago'; return d.toLocaleDateString(); };
+  const DEC_LABEL = { recommend:'✅ Recommended', recommend_pending:'✅ Met (already pending)', auto_execute_pending:'✅ Met (auto)', no_change:'○ No change', error:'⚠ Error' };
 
   const Stat = ({ v, l }) => (
     <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 p-3">
@@ -320,8 +357,12 @@ function WeatherAdsView() {
         <div>
           <h1 className="text-xl font-black tracking-tight">🌦 Weather Triggered Ads</h1>
           <p className="text-xs text-teal-100/80 mt-0.5">Run, pause or re-budget Meta ads automatically on Canadian weather. Canada-only.</p>
+          {lastCheckedAt && <p className="text-[11px] text-teal-100/70 mt-1">Last check: {fmtWhen(lastCheckedAt)}</p>}
         </div>
-        <button onClick={()=>setEditRule({})} className="text-sm font-semibold bg-white text-[#2E8A97] hover:bg-teal-50 rounded-lg px-4 py-2 whitespace-nowrap">+ New rule</button>
+        <div className="flex items-center gap-2">
+          <button disabled={checking!=null || activeCount===0} onClick={()=>runChecks(null)} title={activeCount===0?'No active rules':'Evaluate all active rules against live weather'} className="text-sm font-semibold bg-white/15 hover:bg-white/25 text-white rounded-lg px-4 py-2 whitespace-nowrap disabled:opacity-40">{checking==='all'?'Checking…':'⟳ Check all now'}</button>
+          <button onClick={()=>setEditRule({})} className="text-sm font-semibold bg-white text-[#2E8A97] hover:bg-teal-50 rounded-lg px-4 py-2 whitespace-nowrap">+ New rule</button>
+        </div>
       </div>
 
       {/* Dashboard shell */}
@@ -333,10 +374,19 @@ function WeatherAdsView() {
       </div>
 
       {approvals.length>0 && (
-        <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3">
-          <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 mb-1">Pending weather recommendations</p>
-          {approvals.map(a=><p key={a.id} className="text-xs text-amber-800 dark:text-amber-200">• {a.headline}</p>)}
-          <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">Approve/modify controls arrive in Phase 3.</p>
+        <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
+          <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">Pending weather recommendations</p>
+          {approvals.map(a=>(
+            <div key={a.id} className="rounded-lg bg-white/70 dark:bg-gray-900/40 border border-amber-200 dark:border-amber-800 p-2.5">
+              <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">{a.headline}</p>
+              {a.body && <p className="text-[11px] text-amber-800/80 dark:text-amber-200/80 mt-0.5">{a.body}</p>}
+              <div className="flex items-center gap-2 mt-2">
+                <button disabled title="Applying to Meta arrives in Phase 3" className="text-[11px] font-semibold text-white bg-emerald-600/50 rounded-md px-2.5 py-1 cursor-not-allowed">Approve & apply (Phase 3)</button>
+                <button onClick={()=>ignoreApproval(a)} className="text-[11px] font-semibold text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md px-2.5 py-1">Ignore</button>
+              </div>
+            </div>
+          ))}
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">Recommendations are logged now. Approving to actually change Meta (with rollback + spend-ceiling safeguards) is Phase 3.</p>
         </div>
       )}
 
@@ -363,7 +413,8 @@ function WeatherAdsView() {
                   {c?.controlling_rule_id && <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300" title="This ad is currently weather-controlled">🎛 In control</span>}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={()=>setCheckRule(r)} className="text-xs font-semibold text-teal-600 border border-teal-200 dark:border-teal-800 rounded-lg px-2.5 py-1">🌤 Check weather</button>
+                  <button disabled={checking!=null} onClick={()=>runChecks(r.id)} title="Evaluate this rule against live weather and log the result" className="text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 rounded-lg px-2.5 py-1 disabled:opacity-40">{checking===r.id?'Running…':'▶ Run now'}</button>
+                  <button onClick={()=>setCheckRule(r)} className="text-xs font-semibold text-teal-600 border border-teal-200 dark:border-teal-800 rounded-lg px-2.5 py-1">🌤 Preview</button>
                   <button onClick={()=>setEditRule(r)} className="text-xs font-semibold border border-gray-200 dark:border-gray-700 rounded-lg px-2.5 py-1">Edit</button>
                 </div>
               </div>
@@ -372,12 +423,19 @@ function WeatherAdsView() {
                 {r.dailyBudgetCents!=null?` · $${wxDollars(r.dailyBudgetCents)}/day`:''}
                 {r.maxIncrementalSpendCents!=null?` · cap $${wxDollars(r.maxIncrementalSpendCents)}`:''}
               </p>
+              {lastRun[r.id] && (
+                <p className="text-[11px] mt-1.5 flex items-center gap-1.5">
+                  <span className={`font-semibold ${lastRun[r.id].decision==='error'?'text-red-600':lastRun[r.id].condition_met?'text-emerald-600 dark:text-emerald-400':'text-gray-400'}`}>{DEC_LABEL[lastRun[r.id].decision]||lastRun[r.id].decision}</span>
+                  <span className="text-gray-400">· {fmtWhen(lastRun[r.id].checked_at)}</span>
+                  {lastRun[r.id].note && <span className="text-gray-400 truncate">· {lastRun[r.id].note}</span>}
+                </p>
+              )}
             </div>
           );
         })}
       </div>
 
-      <p className="text-[11px] text-gray-400">Phase 1 — rules & live weather preview. Meta actions, approvals, automatic scheduling and reporting land in Phases 2–5.</p>
+      <p className="text-[11px] text-gray-400">Phase 2 — rules run through the engine on demand: every check is logged and triggered rules generate a recommendation. Applying to Meta (Phase 3), automatic scheduling (Phase 4) and reporting (Phase 5) are next. No Meta changes are made yet.</p>
 
       {editRule && <WeatherRuleModal rule={editRule.id?editRule:null} onClose={()=>setEditRule(null)} onSaved={load} />}
       {checkRule && <WeatherCheckModal rule={checkRule} onClose={()=>setCheckRule(null)} />}
