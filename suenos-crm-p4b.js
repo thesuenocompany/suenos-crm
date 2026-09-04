@@ -5853,7 +5853,11 @@ function AdPerformanceView() {
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-0.5 font-mono">Campaign {c.campaignId}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5 font-mono flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span className="cursor-pointer hover:text-teal-600" title="Click to copy campaign ID" onClick={()=>{navigator.clipboard?.writeText(String(c.campaignId||'')); showToast(dispatch,'Campaign ID copied');}}>Campaign {c.campaignId}</span>
+                    {c.adsetId && <span className="cursor-pointer hover:text-teal-600" title="Click to copy ad set ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adsetId)); showToast(dispatch,'Ad set ID copied');}}>Ad set {c.adsetId}</span>}
+                    {c.adId && <span className="cursor-pointer hover:text-teal-600" title="Click to copy ad ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adId)); showToast(dispatch,'Ad ID copied');}}>Ad {c.adId}</span>}
+                  </p>
                   {c.lastRefreshedAt && (
                     <p className="text-[10px] text-gray-400 mt-0.5">
                       Updated {fmtDate(c.lastRefreshedAt)}
@@ -6058,6 +6062,7 @@ function AdPerformanceView() {
                         </button>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{a.name}</p>
+                          <p className="text-[10px] text-gray-400 font-mono cursor-pointer hover:text-teal-600 truncate" title="Click to copy ad set ID" onClick={()=>{navigator.clipboard?.writeText(String(a.id)); showToast(dispatch,'Ad set ID copied');}}>ID {a.id} ⧉</p>
                           <p className="text-[11px] text-gray-400">
                             <span className={on?'text-emerald-600 font-semibold':''}>{on ? '● Running' : (a.status||'Paused')}</span>
                             {a.dailyBudget ? ` · $${a.dailyBudget}/day` : ''}

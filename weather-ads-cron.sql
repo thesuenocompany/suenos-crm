@@ -44,8 +44,31 @@ select cron.schedule('weather-ads-tick', '0 */2 * * *', $job$
   );
 $job$);
 
--- verify it registered:
---   select jobid, schedule, jobname, active from cron.job where jobname = 'weather-ads-tick';
+-- ── Phase 5: refresh Meta insights + keep the spend ceiling honest ──────────
+-- Runs weather-report every 2h (offset 30 min from the tick above so they don't
+-- collide). Pulls real spend/results per triggered window and feeds the OPEN
+-- period's actual spend into the ceiling. Uses the SAME anon bearer + CRON_SECRET.
+do $$
+begin
+  if exists (select 1 from cron.job where jobname = 'weather-ads-report') then
+    perform cron.unschedule('weather-ads-report');
+  end if;
+end $$;
+
+select cron.schedule('weather-ads-report', '30 */2 * * *', $job$
+  select net.http_post(
+    url     := 'https://dowfjjthshbbgnvwxzjv.supabase.co/functions/v1/weather-report',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvd2ZqanRoc2hiYmdudnd4emp2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2NzMxNjMsImV4cCI6MjA5NjI0OTE2M30.KnXWIp7BXqoxTv2-os77_7FphL5ZVn1XbB1HTwbxKsU'
+    ),
+    body    := jsonb_build_object('cron_secret', '<CRON_SECRET>'),
+    timeout_milliseconds := 120000
+  );
+$job$);
+
+-- verify they registered:
+--   select jobid, schedule, jobname, active from cron.job where jobname like 'weather-ads-%';
 -- recent runs:
 --   select job_pid, status, return_message, start_time
 --     from cron.job_run_details

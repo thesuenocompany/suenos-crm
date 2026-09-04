@@ -354,8 +354,10 @@ function WeatherAdsView() {
   const [control, setControl] = React.useState([]);
   const [approvals, setApprovals] = React.useState([]);
   const [lastRun, setLastRun] = React.useState({});   // ruleId -> latest run row
+  const [periods, setPeriods] = React.useState([]);   // automation_periods (Phase 5 reporting)
   const [loading, setLoading] = React.useState(true);
   const [checking, setChecking] = React.useState(null); // 'all' | ruleId | null
+  const [syncing, setSyncing] = React.useState(false);
   const [err, setErr] = React.useState('');
   const [editRule, setEditRule] = React.useState(null);   // null | {} (new) | rule
   const [checkRule, setCheckRule] = React.useState(null);
@@ -376,8 +378,23 @@ function WeatherAdsView() {
       const { data:runs } = await sb.from('automation_runs').select('rule_id,checked_at,condition_met,decision,note').order('checked_at',{ascending:false}).limit(300);
       const byRule = {}; (runs||[]).forEach(x => { if (!byRule[x.rule_id]) byRule[x.rule_id] = x; });
       setLastRun(byRule);
+      const { data:per } = await sb.from('automation_periods').select('*').eq('trigger_type','weather').order('started_at',{ascending:false}).limit(200);
+      setPeriods(per||[]);
     } catch (e) { setErr(e.message || String(e)); }
     setLoading(false);
+  };
+
+  // Phase 5 — pull Meta insights for every triggered period (spend/results + baseline).
+  const syncReport = async () => {
+    setSyncing(true);
+    try {
+      const { data, error } = await sb.functions.invoke('weather-report', { body:{} });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Sync failed');
+      const failed = (data.results||[]).filter(r=>!r.ok).length;
+      showToast(dispatch, failed ? `Synced ${data.synced} · ${failed} had no Meta data` : `Synced ${data.synced} period${data.synced===1?'':'s'}`);
+      await load();
+    } catch (e) { showToast(dispatch, 'Sync failed: '+(e.message||e), 'error'); }
+    setSyncing(false);
   };
   React.useEffect(() => { load(); }, []);
 
@@ -428,6 +445,10 @@ function WeatherAdsView() {
   const ctrlFor = id => control.find(c => c.target_id === id);
   const activeCount = rules.filter(r=>r.active).length;
   const controlledCount = control.filter(c=>c.controlling_rule_id).length;
+  const ruleName = id => (rules.find(r=>r.id===id)||{}).name || '—';
+  const weatherSpendCents = periods.reduce((s,p)=>s+(p.spend_cents||0),0);
+  const anySynced = periods.some(p=>p.metrics_synced_at);
+  const pctLift = (now, base) => (base==null||base===0) ? null : Math.round(((now-base)/base)*100);
   const lastCheckedAt = Object.values(lastRun).map(x=>x.checked_at).sort().slice(-1)[0];
   const fmtWhen = ts => { if(!ts) return null; const d=new Date(ts), m=Math.round((Date.now()-d)/60000); if(m<1) return 'just now'; if(m<60) return m+'m ago'; if(m<1440) return Math.round(m/60)+'h ago'; return d.toLocaleDateString(); };
   const DEC_LABEL = { recommend:'✅ Recommended', recommend_pending:'✅ Met (already pending)', holding:'🎛 Active (holding)', auto_executed:'⚡ Auto-applied', auto_failed:'⚠ Auto-apply failed', rolled_back:'⏹ Rolled back (cleared)', ceiling_rolled_back:'⏹ Rolled back (ceiling)', rollback_failed:'⚠ Rollback failed', auto_blocked_no_cron_secret:'⚠ Needs CRON_SECRET', rollback_blocked_no_cron_secret:'⚠ Needs CRON_SECRET', no_change:'○ No change', error:'⚠ Error' };
@@ -458,7 +479,7 @@ function WeatherAdsView() {
         <Stat v={activeCount} l="Active rules" />
         <Stat v={approvals.length} l="Pending approvals" />
         <Stat v={controlledCount} l="Ads weather-controlled" />
-        <Stat v="—" l="Weather spend (Phase 5)" />
+        <Stat v={periods.length ? `$${wxDollars(weatherSpendCents)}` : '—'} l="Weather spend (triggered)" />
       </div>
 
       {approvals.length>0 && (
@@ -524,7 +545,47 @@ function WeatherAdsView() {
         })}
       </div>
 
-      <p className="text-[11px] text-gray-400">Phase 4 — a scheduler runs every 2h: it auto-applies auto-mode rules, auto-rolls-back rules whose weather has cleared, and enforces the spend ceiling — all with the same safeguards. Approval rules still only recommend. Reporting (Phase 5) is next.</p>
+      {/* Phase 5 — trigger performance */}
+      <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <div>
+            <p className="font-semibold">📊 Trigger performance</p>
+            <p className="text-[11px] text-gray-500">What each weather-triggered window actually delivered on Meta, vs the same ad in the equal window just before it.</p>
+          </div>
+          <button disabled={syncing || periods.length===0} onClick={syncReport} title={periods.length===0?'No triggered periods yet':'Pull Meta insights for every triggered window'} className="text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 rounded-lg px-3 py-1.5 disabled:opacity-40">{syncing?'Syncing…':'⟳ Sync Meta insights'}</button>
+        </div>
+        {periods.length===0
+          ? <p className="text-xs text-gray-500 py-3 text-center">No triggered windows yet. When a rule activates an ad, it appears here — then Sync to pull spend & results.</p>
+          : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="text-gray-400 text-left border-b border-gray-100 dark:border-gray-700">
+                <th className="px-2 py-1">Rule</th><th className="px-2 py-1">Window</th><th className="px-2 py-1 text-right">Spend</th><th className="px-2 py-1 text-right">Impr.</th><th className="px-2 py-1 text-right">Clicks</th><th className="px-2 py-1 text-right">Results</th><th className="px-2 py-1 text-right">vs&nbsp;prior</th>
+              </tr></thead>
+              <tbody>
+                {periods.map(p=>{
+                  const lift = pctLift(p.results, p.baseline_results);
+                  const spendLift = pctLift(p.spend_cents, p.baseline_spend_cents);
+                  return (
+                    <tr key={p.id} className="border-b border-gray-50 dark:border-gray-800">
+                      <td className="px-2 py-1.5 font-medium">{ruleName(p.rule_id)}</td>
+                      <td className="px-2 py-1.5 text-gray-500">{(p.started_at||'').slice(5,10)} → {p.ended_at?p.ended_at.slice(5,10):<span className="text-emerald-600 font-semibold">active</span>}</td>
+                      <td className="px-2 py-1.5 text-right">{p.spend_cents!=null?`$${wxDollars(p.spend_cents)}`:'—'}</td>
+                      <td className="px-2 py-1.5 text-right">{p.impressions!=null?p.impressions.toLocaleString():'—'}</td>
+                      <td className="px-2 py-1.5 text-right">{p.clicks!=null?p.clicks.toLocaleString():'—'}</td>
+                      <td className="px-2 py-1.5 text-right font-semibold">{p.results!=null?p.results:'—'}</td>
+                      <td className="px-2 py-1.5 text-right">{lift==null?<span className="text-gray-300">—</span>:<span className={lift>=0?'text-emerald-600 font-semibold':'text-rose-600 font-semibold'}>{lift>=0?'+':''}{lift}%</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!anySynced && <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2">Metrics not pulled yet — hit “Sync Meta insights”. (Meta reports with a short delay, so very recent windows may read low.)</p>}
+          </div>
+        )}
+      </div>
+
+      <p className="text-[11px] text-gray-400">Phase 5 — weather-triggered windows are measured against baseline on Meta (spend, clicks, results, lift), and the live period’s real spend feeds the hard ceiling. Weather Ads is complete: rules → live checks → approval/auto → Meta with safeguards → scheduled every 2h → reporting.</p>
 
       {editRule && <WeatherRuleModal rule={editRule.id?editRule:null} onClose={()=>setEditRule(null)} onSaved={load} />}
       {checkRule && <WeatherCheckModal rule={checkRule} onClose={()=>setCheckRule(null)} />}
