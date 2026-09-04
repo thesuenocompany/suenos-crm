@@ -5235,6 +5235,18 @@ function AdPerformanceView() {
   const allMetaCampaigns = visibleCampaigns.filter(c => (c.platform || 'meta') === 'meta');
   const [campFilter, setCampFilter] = React.useState('all');   // 'all' | region | `city:<city>`
   const [campSort, setCampSort]     = React.useState('newest'); // newest | spend | city
+  // Weather-rule overlay: which Meta objects have a weather rule (admin-only table)
+  const [wxRules, setWxRules] = React.useState([]);
+  const [wxControl, setWxControl] = React.useState([]);
+  React.useEffect(() => { if (!isAdmin) return; (async () => {
+    try {
+      const { data:r } = await sb.from('automation_rules').select('*').eq('trigger_type','weather');
+      setWxRules((r||[]).map(mapWxRule));
+      const { data:ctrl } = await sb.from('automation_control').select('target_id,controlling_rule_id');
+      setWxControl(ctrl||[]);
+    } catch(_) {}
+  })(); }, [isAdmin]);
+  const wxRulesFor = c => wxRules.filter(r => [c.campaignId, c.adsetId, c.adId].filter(Boolean).map(String).includes(String(r.targetId)));
   // Distinct regions & cities present in the campaigns
   const campRegions = [...new Set(allMetaCampaigns.map(c => cityToRegion(c.city) || c.city).filter(Boolean))].sort();
   const campCities  = [...new Set(allMetaCampaigns.map(c => c.city).filter(Boolean))].sort();
@@ -5858,6 +5870,7 @@ function AdPerformanceView() {
                     {c.adsetId && <span className="cursor-pointer hover:text-teal-600" title="Click to copy ad set ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adsetId)); showToast(dispatch,'Ad set ID copied');}}>Ad set {c.adsetId}</span>}
                     {c.adId && <span className="cursor-pointer hover:text-teal-600" title="Click to copy ad ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adId)); showToast(dispatch,'Ad ID copied');}}>Ad {c.adId}</span>}
                   </p>
+                  {isAdmin && wxRulesFor(c).length>0 && <AdWeatherRuleTag rules={wxRulesFor(c)} control={wxControl} />}
                   {c.lastRefreshedAt && (
                     <p className="text-[10px] text-gray-400 mt-0.5">
                       Updated {fmtDate(c.lastRefreshedAt)}

@@ -77,6 +77,61 @@ function wxRuleSummary(r) {
   return `${consec}${c.label} ${r.threshold ?? ''}${c.unit}${lead}`;
 }
 
+// Compact weather-rule status shown on Ad Performance cards. For each rule
+// attached to that Meta object it shows the condition, whether it's MET right
+// now (live from the provider), and whether the rule currently controls the ad.
+function AdWeatherRuleTag({ rules, control }) {
+  const [live, setLive] = React.useState({});   // ruleId -> { loading?, w?, err? }
+  const controllingIds = new Set((control||[]).filter(c=>c.controlling_rule_id).map(c=>String(c.target_id)));
+  const key = (rules||[]).map(r=>r.id).join(',');
+  React.useEffect(() => { let dead=false; (async () => {
+    for (const r of (rules||[])) {
+      setLive(s=>({ ...s, [r.id]:{ loading:true } }));
+      try {
+        let lat=r.latitude, lng=r.longitude;
+        if (lat==null || lng==null) {
+          const g = await sb.functions.invoke('weather-provider', { body:{ action:'geocode', city:r.city, province:r.province } });
+          const f = g.data?.results?.[0]; if (f) { lat=f.latitude; lng=f.longitude; }
+        }
+        if (lat==null || lng==null) throw new Error('no location');
+        const res = await sb.functions.invoke('weather-provider', { body:{ action:'weather', latitude:lat, longitude:lng } });
+        if (res.data?.error || res.error) throw new Error(res.data?.error || res.error?.message || 'weather failed');
+        if (!dead) setLive(s=>({ ...s, [r.id]:{ w:res.data } }));
+      } catch (e) { if (!dead) setLive(s=>({ ...s, [r.id]:{ err:(e.message||String(e)) } })); }
+    }
+  })(); return ()=>{ dead=true; }; }, [key]);
+
+  return (
+    <div className="mt-1.5 rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50/60 dark:bg-teal-900/10 p-2 space-y-1.5">
+      {(rules||[]).map(r=>{
+        const l = live[r.id];
+        const ev = l?.w ? evalWeatherCondition(r, l.w) : null;
+        const inControl = controllingIds.has(String(r.targetId));
+        return (
+          <div key={r.id} className="text-[11px] leading-snug">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="font-semibold text-teal-700 dark:text-teal-300">🌦 Weather rule: {r.name}</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${r.active?'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300':'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'}`}>{r.active?'Active':'Inactive'}</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${r.approvalRequired?'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300':'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>{r.approvalRequired?'Approval':'Auto'}</span>
+              {inControl && <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">🎛 In control</span>}
+            </div>
+            <p className="text-gray-500 dark:text-gray-400">Trigger: {wxRuleSummary(r)} · 📍 {r.city}{r.province?`, ${r.province}`:''}</p>
+            {l?.loading && <p className="text-gray-400">Checking live weather…</p>}
+            {l?.err && <p className="text-amber-600 dark:text-amber-400">Live weather unavailable ({l.err})</p>}
+            {ev && (
+              <p className={ev.met ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-gray-500 dark:text-gray-400'}>
+                {ev.met ? '✅ Met right now' : '○ Not met right now'} — {ev.detail}
+                {l.w?.current?.tempC!=null ? ` · now ${wxNum(l.w.current.tempC)}°C` : ''}
+                {l.w?.airQuality?.usAqi!=null ? ` · AQI ${l.w.airQuality.usAqi}` : ''}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Live weather check (provider preview) ────────────────────────────────────
 function WeatherCheckModal({ rule, onClose }) {
   const { dispatch } = useApp();
