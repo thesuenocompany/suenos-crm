@@ -82,8 +82,11 @@ function wxRuleSummary(r) {
 // now (live from the provider), and whether the rule currently controls the ad.
 function AdWeatherRuleTag({ rules, control }) {
   const [live, setLive] = React.useState({});   // ruleId -> { loading?, w?, err? }
+  const [metaStatus, setMetaStatus] = React.useState({}); // targetId -> effective_status (live)
   const controllingIds = new Set((control||[]).filter(c=>c.controlling_rule_id).map(c=>String(c.target_id)));
   const key = (rules||[]).map(r=>r.id).join(',');
+
+  // Weather condition (one-time on mount) — the forecast doesn't move minute to minute.
   React.useEffect(() => { let dead=false; (async () => {
     for (const r of (rules||[])) {
       setLive(s=>({ ...s, [r.id]:{ loading:true } }));
@@ -101,6 +104,29 @@ function AdWeatherRuleTag({ rules, control }) {
     }
   })(); return ()=>{ dead=true; }; }, [key]);
 
+  // Live on/off status of the controlled Meta object — polled every 45s so the
+  // card reflects the true state even when a weather rule flips it while you watch.
+  React.useEffect(() => {
+    const token = (typeof localStorage!=='undefined' && localStorage.getItem('meta_access_token')) || '';
+    if (!token) return;
+    let dead=false;
+    const pull = async () => {
+      const ids = [...new Set((rules||[]).map(r=>r.targetId).filter(Boolean))];
+      for (const id of ids) {
+        try {
+          const j = await fetch(`https://graph.facebook.com/v25.0/${id}?fields=effective_status,status&access_token=${encodeURIComponent(token)}`).then(r=>r.json());
+          if (!dead && !j.error) setMetaStatus(s=>({ ...s, [id]: j.effective_status || j.status || '?' }));
+        } catch(_) {}
+      }
+    };
+    pull();
+    const t = setInterval(pull, 45000);
+    return ()=>{ dead=true; clearInterval(t); };
+  }, [key]);
+
+  const isRunning = s => s === 'ACTIVE';
+  const statusLabel = s => !s ? '' : (s==='ACTIVE'?'● Running':(s.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,m=>m.toUpperCase())));
+
   return (
     <div className="mt-1.5 rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50/60 dark:bg-teal-900/10 p-2 space-y-1.5">
       {(rules||[]).map(r=>{
@@ -114,6 +140,7 @@ function AdWeatherRuleTag({ rules, control }) {
               <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${r.active?'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300':'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'}`}>{r.active?'Active':'Inactive'}</span>
               <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${r.approvalRequired?'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300':'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>{r.approvalRequired?'Approval':'Auto'}</span>
               {inControl && <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">🎛 In control</span>}
+              {metaStatus[r.targetId] && <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${isRunning(metaStatus[r.targetId])?'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300':'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`} title="Live status of this ad object, refreshed automatically">{statusLabel(metaStatus[r.targetId])} · live</span>}
             </div>
             <p className="text-gray-500 dark:text-gray-400">Trigger: {wxRuleSummary(r)} · 📍 {r.city}{r.province?`, ${r.province}`:''}</p>
             {l?.loading && <p className="text-gray-400">Checking live weather…</p>}
