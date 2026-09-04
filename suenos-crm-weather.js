@@ -77,6 +77,79 @@ function wxRuleSummary(r) {
   return `${consec}${c.label} ${r.threshold ?? ''}${c.unit}${lead}`;
 }
 
+// Plain-English one-liner describing what a rule does.
+function wxPlainRule(r) {
+  const c = r.city || 'this area'; const th = r.threshold;
+  switch (r.weatherCondition) {
+    case 'temp_above':          return `Runs this ad when it's ${th}°C or hotter in ${c}`;
+    case 'temp_below':          return `Runs this ad when it's ${th}°C or colder in ${c}`;
+    case 'forecast_high_above': return `Runs this ad when ${c} is forecast to reach ${th}°C or hotter`;
+    case 'forecast_low_below':  return `Runs this ad when ${c} is forecast to drop to ${th}°C or colder`;
+    case 'consecutive_above':   return `Runs this ad after ${r.consecutiveDays||2}+ days of highs at/above ${th}°C in ${c}`;
+    case 'consecutive_below':   return `Runs this ad after ${r.consecutiveDays||2}+ days of lows at/below ${th}°C in ${c}`;
+    case 'precip_prob':         return `Runs this ad when the chance of rain in ${c} is ${th}% or higher`;
+    case 'snow':                return `Runs this ad when ${c} is forecast ${th}cm+ of snow`;
+    case 'air_quality':         return `Runs this ad when air quality (AQI) in ${c} hits ${th} or higher`;
+    case 'severe_alert':        return `Runs this ad during a severe-weather alert in ${c}`;
+    default:                    return `Weather rule for ${c}`;
+  }
+}
+// Short friendly reading of the current relevant measurement.
+function wxFriendlyReading(r, w) {
+  const d0 = (w.daily||[])[0]||{}; const rnd = n => (n==null?'—':Math.round(n));
+  switch (r.weatherCondition) {
+    case 'temp_above': case 'temp_below':          return `${rnd(w.current?.tempC)}°C right now`;
+    case 'forecast_high_above': case 'consecutive_above': return `today's high ${rnd(d0.highC)}°C`;
+    case 'forecast_low_below':  case 'consecutive_below': return `today's low ${rnd(d0.lowC)}°C`;
+    case 'precip_prob':         return `${d0.precipProbMax ?? '—'}% chance of rain today`;
+    case 'snow':                return `${rnd(d0.snowfallCm)}cm snow forecast`;
+    case 'air_quality':         return `AQI ${w.airQuality?.usAqi ?? '—'}`;
+    default:                    return '';
+  }
+}
+
+// ── tiny inline weather/status icons ─────────────────────────────────────────
+const _WIco = (children) => ({ className }) => (
+  <svg className={className||'w-4 h-4'} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+);
+const WIcoThermo  = _WIco(<path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0Z"/>);
+const WIcoSun     = _WIco(<><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></>);
+const WIcoDroplet = _WIco(<path d="M12 2.7s6 6.3 6 10.3a6 6 0 1 1-12 0c0-4 6-10.3 6-10.3Z"/>);
+const WIcoSnow    = _WIco(<><path d="M12 2v20M5 6l14 12M19 6 5 18"/></>);
+const WIcoWind    = _WIco(<path d="M4 12h11a3 3 0 1 0-3-3M4 16h7a2.5 2.5 0 1 1-2.5 2.5"/>);
+const WIcoCheck   = _WIco(<path d="M20 6 9 17l-5-5"/>);
+const WIcoArrow   = _WIco(<path d="M5 12h14M13 6l6 6-6 6"/>);
+const wxGlyph = { thermo:WIcoThermo, sun:WIcoSun, droplet:WIcoDroplet, snow:WIcoSnow, wind:WIcoWind };
+
+// Big-number reading pieces for the "current" segment.
+function wxReadingParts(r, w) {
+  const d0 = (w.daily||[])[0]||{}; const rnd = n => (n==null?'—':Math.round(n));
+  switch (r.weatherCondition) {
+    case 'temp_above':          return { value:rnd(w.current?.tempC), unit:'°', caption:'Now',        glyph:'sun' };
+    case 'temp_below':          return { value:rnd(w.current?.tempC), unit:'°', caption:'Now',        glyph:'thermo' };
+    case 'forecast_high_above': case 'consecutive_above': return { value:rnd(d0.highC), unit:'°', caption:'Today high', glyph:'sun' };
+    case 'forecast_low_below':  case 'consecutive_below': return { value:rnd(d0.lowC),  unit:'°', caption:'Today low',  glyph:'thermo' };
+    case 'precip_prob':         return { value:(d0.precipProbMax ?? '—'), unit:'%', caption:'Rain',   glyph:'droplet' };
+    case 'snow':                return { value:rnd(d0.snowfallCm), unit:'cm', caption:'Snow',         glyph:'snow' };
+    case 'air_quality':         return { value:(w.airQuality?.usAqi ?? '—'), unit:'', caption:'Air',  glyph:'wind' };
+    default:                    return { value:'—', unit:'', caption:'', glyph:'thermo' };
+  }
+}
+// Threshold chip label for the "target" segment.
+function wxTargetLabel(r) {
+  const th = r.threshold;
+  switch (r.weatherCondition) {
+    case 'temp_above': case 'forecast_high_above': case 'consecutive_above': return `≥ ${th}°`;
+    case 'temp_below': case 'forecast_low_below':  case 'consecutive_below': return `≤ ${th}°`;
+    case 'precip_prob': return `≥ ${th}%`;
+    case 'snow':        return `≥ ${th}cm`;
+    case 'air_quality': return `AQI ≥ ${th}`;
+    case 'severe_alert':return 'Alert';
+    default:            return `${th ?? ''}`;
+  }
+}
+
 // Compact weather-rule status shown on Ad Performance cards. For each rule
 // attached to that Meta object it shows the condition, whether it's MET right
 // now (live from the provider), and whether the rule currently controls the ad.
@@ -128,30 +201,62 @@ function AdWeatherRuleTag({ rules, control }) {
   const statusLabel = s => !s ? '' : (s==='ACTIVE'?'● Running':(s.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,m=>m.toUpperCase())));
 
   return (
-    <div className="mt-1.5 rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50/60 dark:bg-teal-900/10 p-2 space-y-1.5">
+    <div className="mt-1.5 space-y-1.5">
       {(rules||[]).map(r=>{
         const l = live[r.id];
         const ev = l?.w ? evalWeatherCondition(r, l.w) : null;
+        const met = !!ev?.met;
         const inControl = controllingIds.has(String(r.targetId));
+        const eff = metaStatus[r.targetId];
+        const parts = l?.w ? wxReadingParts(r, l.w) : null;
+        const Glyph = wxGlyph[parts?.glyph || 'thermo'];
+        const adState = eff === 'ACTIVE'          ? { word:'Live',    dot:'bg-emerald-500', txt:'text-emerald-600 dark:text-emerald-400' }
+                      : eff === 'CAMPAIGN_PAUSED'  ? { word:'Blocked', dot:'bg-amber-500',   txt:'text-amber-600 dark:text-amber-400' }
+                      : eff                        ? { word:'Paused',  dot:'bg-gray-400',    txt:'text-gray-500 dark:text-gray-400' }
+                      :                              { word:'—',       dot:'bg-gray-300',    txt:'text-gray-400' };
+        let note = null;
+        if (!r.active) note = { t:'Automation is off', tone:'muted' };
+        else if (eff === 'CAMPAIGN_PAUSED') note = { t:'Campaign is off — switch it on above to deliver', tone:'warn' };
+        else if (met && r.approvalRequired && eff !== 'ACTIVE' && !inControl) note = { t:'Approve in Weather Ads to turn on', tone:'warn' };
+        const noteCls = t => t==='warn' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300' : 'bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400';
         return (
-          <div key={r.id} className="text-[11px] leading-snug">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="font-semibold text-teal-700 dark:text-teal-300">🌦 Weather rule: {r.name}</span>
-              <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${r.active?'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300':'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'}`}>{r.active?'Active':'Inactive'}</span>
-              <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${r.approvalRequired?'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300':'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>{r.approvalRequired?'Approval':'Auto'}</span>
-              {inControl && <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">🎛 In control</span>}
-              {metaStatus[r.targetId] && <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${isRunning(metaStatus[r.targetId])?'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300':'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`} title="Live status of this ad object, refreshed automatically">{statusLabel(metaStatus[r.targetId])} · live</span>}
+          <div key={r.id} className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden bg-white dark:bg-gray-900" title={wxPlainRule(r)}>
+            {/* header strip */}
+            <div className="flex items-center justify-between px-2.5 py-1 bg-teal-50 dark:bg-teal-900/20 border-b border-teal-100/70 dark:border-teal-800/60">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Glyph className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 flex-shrink-0"/>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-teal-700 dark:text-teal-300 truncate">Weather · {r.city}</span>
+              </div>
+              <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full flex-shrink-0 ${r.approvalRequired?'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300':'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300'}`}>{r.approvalRequired?'Approval':'Auto'}</span>
             </div>
-            <p className="text-gray-500 dark:text-gray-400">Trigger: {wxRuleSummary(r)} · 📍 {r.city}{r.province?`, ${r.province}`:''}</p>
-            {l?.loading && <p className="text-gray-400">Checking live weather…</p>}
-            {l?.err && <p className="text-amber-600 dark:text-amber-400">Live weather unavailable ({l.err})</p>}
-            {ev && (
-              <p className={ev.met ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-gray-500 dark:text-gray-400'}>
-                {ev.met ? '✅ Met right now' : '○ Not met right now'} — {ev.detail}
-                {l.w?.current?.tempC!=null ? ` · now ${wxNum(l.w.current.tempC)}°C` : ''}
-                {l.w?.airQuality?.usAqi!=null ? ` · AQI ${l.w.airQuality.usAqi}` : ''}
-              </p>
-            )}
+            {/* flow: reading → target → ad */}
+            <div className="flex items-center">
+              <div className="flex-1 px-1 py-2 text-center">
+                {l?.loading ? <div className="text-lg font-black text-gray-300 animate-pulse">··</div>
+                  : parts ? <div className="text-lg font-black leading-none text-gray-800 dark:text-gray-100">{parts.value}<span className="text-xs font-bold text-gray-400">{parts.unit}</span></div>
+                  : <div className="text-lg font-black text-gray-300">—</div>}
+                <div className="text-[9px] uppercase tracking-wide text-gray-400 mt-0.5">{parts?.caption || 'Now'}</div>
+              </div>
+              <WIcoArrow className="w-4 h-4 text-gray-300 dark:text-gray-600 flex-shrink-0"/>
+              <div className="flex-1 px-1 py-2 text-center">
+                <div className={`inline-flex items-center gap-1 text-sm font-bold ${met?'text-emerald-600 dark:text-emerald-400':'text-gray-500 dark:text-gray-400'}`}>
+                  {ev && (met
+                    ? <span className="w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center"><WIcoCheck className="w-3 h-3"/></span>
+                    : <span className="w-4 h-4 rounded-full border-2 border-gray-300 dark:border-gray-600"/>)}
+                  {wxTargetLabel(r)}
+                </div>
+                <div className={`text-[9px] uppercase tracking-wide mt-0.5 ${met?'text-emerald-500':'text-gray-400'}`}>{ev ? (met?'Met':'Target') : 'Target'}</div>
+              </div>
+              <WIcoArrow className="w-4 h-4 text-gray-300 dark:text-gray-600 flex-shrink-0"/>
+              <div className="flex-1 px-1 py-2 text-center">
+                <div className="inline-flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${adState.dot}`}/>
+                  <span className={`text-sm font-bold ${adState.txt}`}>{adState.word}</span>
+                </div>
+                <div className="text-[9px] uppercase tracking-wide text-gray-400 mt-0.5">Ad</div>
+              </div>
+            </div>
+            {note && <div className={`px-2.5 py-1 text-[10px] font-semibold border-t border-gray-100 dark:border-gray-800 ${noteCls(note.tone)}`}>{note.t}</div>}
           </div>
         );
       })}
