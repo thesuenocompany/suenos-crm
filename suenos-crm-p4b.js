@@ -5220,6 +5220,22 @@ function AdCommentsPanel({ adId }) {
   );
 }
 
+// ── Simple inline icons (bigger + cleaner than emoji) ────────────────────────
+const _Ico = (children, filled) => ({ className }) => (
+  <svg className={className||'w-5 h-5'} viewBox="0 0 24 24"
+    fill={filled?'currentColor':'none'} stroke={filled?'none':'currentColor'}
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+);
+const IcoPlay    = _Ico(<path d="M7 4v16l13-8z"/>, true);
+const IcoPause   = _Ico(<><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></>, true);
+const IcoRefresh = _Ico(<><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></>);
+const IcoExternal= _Ico(<><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></>);
+const IcoLayers  = _Ico(<><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></>);
+const IcoSpark   = _Ico(<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/>, true);
+const IcoChat    = _Ico(<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>);
+const IcoHeart   = _Ico(<path d="M20.8 5.6a5.5 5.5 0 0 0-7.8 0L12 6.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 22l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>, true);
+const IcoShare   = _Ico(<><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></>);
+
 function AdPerformanceView() {
   const { state, dispatch } = useApp();
   const isAdmin = state.user?.role === 'admin';
@@ -5294,6 +5310,7 @@ function AdPerformanceView() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingId, setRefreshingId] = useState(null);
   const [didAutoRefresh, setDidAutoRefresh] = useState(false);
+  const [liveStatus, setLiveStatus] = useState({});     // campaignId -> effective_status, polled live
   const [creativeCache, setCreativeCache] = useState({}); // { [adId]: { thumbnail, headline, body, loading, error } }
   const [expandedCreative, setExpandedCreative] = useState({}); // { [campaignId]: bool }
   const [showComments, setShowComments] = useState({}); // { [campaignId]: bool }
@@ -5506,7 +5523,7 @@ function AdPerformanceView() {
   // Master ON/OFF — activate/pause the whole hierarchy (campaign + ad sets + ads)
   const [campToggleBusy, setCampToggleBusy] = useState({});
   async function toggleCampaign(c) {
-    const isOn = c.status === 'ACTIVE';
+    const isOn = (liveStatus[c.id] || c.status) === 'ACTIVE';
     const goingLive = !isOn;
     if (goingLive) {
       if (!confirm(`Turn ON the "${c.city}" campaign? All its ad sets and ads will go ACTIVE and start spending their daily budgets.`)) return;
@@ -5639,6 +5656,27 @@ function AdPerformanceView() {
     }
     setDidAutoRefresh(true);
   }, [datePreset]);
+
+  // Keep on/off status live: poll each campaign's effective status every 45s
+  // (lightweight status-only fetch — no insights) so the header reflects reality
+  // even when a weather rule flips a campaign while you're watching.
+  const campIdsKey = campaigns.map(c=>c.id).join(',');
+  useEffect(() => {
+    if (!token || campaigns.length === 0) return;
+    let dead = false;
+    const pull = async () => {
+      for (const c of campaigns) {
+        try {
+          const j = await fetch(`${BASE}/${c.campaignId}?fields=effective_status,status&access_token=${token}`).then(r=>r.json());
+          if (!dead && !j.error) setLiveStatus(s => ({ ...s, [c.id]: j.effective_status || j.status }));
+        } catch(_) {}
+        await new Promise(r=>setTimeout(r,120));
+      }
+    };
+    const t = setInterval(pull, 45000);
+    return () => { dead = true; clearInterval(t); };
+  }, [token, campIdsKey]);
+  const effStatusOf = c => liveStatus[c.id] || c.status;
 
   const fmtMoney = n => n === 0 ? '$0.00' : `$${n.toFixed(2)}`;
   const fmtPct   = n => n === 0 ? '0.00%' : `${n.toFixed(2)}%`;
@@ -5850,72 +5888,51 @@ function AdPerformanceView() {
         </div>
       ) : (
         <div className="space-y-4">
-          {campaigns.map(c => (
+          {campaigns.map(c => { const eff = effStatusOf(c); const running = eff === 'ACTIVE'; const busy = campToggleBusy[c.id]; const alert = alertByCampaign[c.id]; return (
             <div key={c.id} className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 p-4 sm:p-5 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-bold text-gray-900 dark:text-white">{c.city}</p>
-                    {statusChip(c.status)}
-                    {deliveryChip(c)}
-                    {alertByCampaign[c.id] && (
-                      <span title={(alertByCampaign[c.id].alertTypes||[]).map(t=>MKT_ALERT_LABELS[t]||t).join(', ')}
-                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${alertByCampaign[c.id].severity==='critical'?'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300':'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
-                        ⚠️ Declining
-                      </span>
-                    )}
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${running?'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400':'bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500'}`}>
+                    {running ? <IcoPlay className="w-5 h-5"/> : <IcoPause className="w-5 h-5"/>}
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-0.5 font-mono flex flex-wrap gap-x-3 gap-y-0.5">
-                    <span className="cursor-pointer hover:text-teal-600" title="Click to copy campaign ID" onClick={()=>{navigator.clipboard?.writeText(String(c.campaignId||'')); showToast(dispatch,'Campaign ID copied');}}>Campaign {c.campaignId}</span>
-                    {c.adsetId && <span className="cursor-pointer hover:text-teal-600" title="Click to copy ad set ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adsetId)); showToast(dispatch,'Ad set ID copied');}}>Ad set {c.adsetId}</span>}
-                    {c.adId && <span className="cursor-pointer hover:text-teal-600" title="Click to copy ad ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adId)); showToast(dispatch,'Ad ID copied');}}>Ad {c.adId}</span>}
-                  </p>
-                  {isAdmin && wxRulesFor(c).length>0 && <AdWeatherRuleTag rules={wxRulesFor(c)} control={wxControl} />}
-                  {c.lastRefreshedAt && (
-                    <p className="text-[10px] text-gray-400 mt-0.5">
-                      Updated {fmtDate(c.lastRefreshedAt)}
-                      {c.startTime && <span> · Started {fmtDate(c.startTime)}</span>}
-                      {c.stopTime  && <span> · {new Date(c.stopTime)<new Date()?'Ended':'Ends'} {fmtDate(c.stopTime)}</span>}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-base font-bold text-gray-900 dark:text-white truncate">{c.city}</p>
+                      <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${running?'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300':'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'}`}>{running?'Running':(eff||'Paused').replace(/_/g,' ').toLowerCase().replace(/\b\w/g,m=>m.toUpperCase())}</span>
+                      {alert && <span title={(alert.alertTypes||[]).map(t=>MKT_ALERT_LABELS[t]||t).join(', ')} className={`w-2.5 h-2.5 rounded-full ${alert.severity==='critical'?'bg-red-500':'bg-amber-500'}`}/>}
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      {running ? 'Delivering' : 'Paused — not delivering'}
+                      {c.lastRefreshedAt && <span> · updated {fmtDate(c.lastRefreshedAt)}</span>}
                     </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {/* Master ON/OFF */}
-                  <div className="flex items-center gap-1.5 no-print">
-                    <span className={`text-[10px] font-bold uppercase ${c.status==='ACTIVE'?'text-emerald-600':'text-gray-400'}`}>
-                      {campToggleBusy[c.id] ? '…' : (c.status==='ACTIVE'?'On':'Off')}
-                    </span>
-                    <button onClick={()=>toggleCampaign(c)} disabled={campToggleBusy[c.id] || !token}
-                      title={c.status==='ACTIVE'?'Turn campaign OFF':'Turn campaign ON'}
-                      className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${c.status==='ACTIVE'?'bg-emerald-500':'bg-gray-300 dark:bg-gray-600'}`}>
-                      <span className="inline-block rounded-full bg-white shadow transition-transform" style={{height:'18px',width:'18px',transform:c.status==='ACTIVE'?'translateX(22px)':'translateX(3px)'}}/>
-                    </button>
+                    {isAdmin && wxRulesFor(c).length>0 && <AdWeatherRuleTag rules={wxRulesFor(c)} control={wxControl} />}
                   </div>
-                  <a href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=813974741538881&selected_campaign_ids=${c.campaignId}`}
-                    target="_blank" rel="noopener noreferrer"
-                    className="px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-blue-200 dark:border-blue-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
-                    Ads Manager ↗
-                  </a>
-                  <button onClick={()=>refreshOne(c)} disabled={refreshingId===c.id}
-                    className="px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50">
-                    {refreshingId===c.id
-                      ? <span className="animate-spin inline-block w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full"></span>
-                      : '↻'}
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0 no-print">
+                  <button onClick={()=>toggleCampaign(c)} disabled={busy || !token}
+                    title={running?'Turn campaign OFF':'Turn campaign ON'}
+                    className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${running?'bg-emerald-500':'bg-gray-300 dark:bg-gray-600'}`}>
+                    <span className="inline-block rounded-full bg-white shadow transition-transform" style={{height:'22px',width:'22px',transform:running?'translateX(23px)':'translateX(3px)'}}/>
                   </button>
+                  <button onClick={()=>refreshOne(c)} disabled={refreshingId===c.id} title="Refresh metrics"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50">
+                    {refreshingId===c.id ? <span className="animate-spin inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full"/> : <IcoRefresh className="w-4 h-4"/>}
+                  </button>
+                  <a href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=813974741538881&selected_campaign_ids=${c.campaignId}`} target="_blank" rel="noopener noreferrer" title="Open in Ads Manager"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-blue-200 dark:border-blue-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20">
+                    <IcoExternal className="w-4 h-4"/>
+                  </a>
                 </div>
               </div>
               {/* Metrics grid */}
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                 {[
-                  { label:'Spend',       value: fmtMoney(c.spend) },
-                  { label:'Impressions', value: fmtNum(c.impressions) },
-                  { label:'Clicks',      value: fmtNum(c.clicks) },
-                  { label:'Reach',       value: fmtNum(c.reach) },
-                  { label:'CTR',         value: fmtPct(c.ctr) },
-                  { label:'CPC',         value: c.cpc > 0 ? fmtMoney(c.cpc) : '—' },
-                  { label:'👍 Reactions', value: fmtNum(c.reactions||0) },
-                  { label:'💬 Comments',  value: fmtNum(c.comments||0) },
-                  { label:'↗ Shares',     value: fmtNum(c.shares||0) },
+                  { label:'Spend',   value: fmtMoney(c.spend) },
+                  { label:'Reach',   value: fmtNum(c.reach) },
+                  { label:'Impr.',   value: fmtNum(c.impressions) },
+                  { label:'Clicks',  value: fmtNum(c.clicks) },
+                  { label:'CTR',     value: fmtPct(c.ctr) },
+                  { label:'CPC',     value: c.cpc > 0 ? fmtMoney(c.cpc) : '—' },
                 ].map(m=>(
                   <div key={m.label} className="bg-gray-50 dark:bg-gray-800/60 rounded-xl px-2 py-2 text-center">
                     <p className="text-sm font-black text-gray-900 dark:text-white">{m.value}</p>
@@ -5923,18 +5940,24 @@ function AdPerformanceView() {
                   </div>
                 ))}
               </div>
+              {/* Engagement — icons, not emoji */}
+              <div className="flex items-center gap-5 mt-2 px-1 text-gray-500 dark:text-gray-400">
+                <span className="inline-flex items-center gap-1.5 text-xs" title="Reactions"><IcoHeart className="w-4 h-4 text-rose-500"/> <b className="text-gray-800 dark:text-gray-200">{fmtNum(c.reactions||0)}</b></span>
+                <span className="inline-flex items-center gap-1.5 text-xs" title="Comments"><IcoChat className="w-4 h-4 text-sky-500"/> <b className="text-gray-800 dark:text-gray-200">{fmtNum(c.comments||0)}</b></span>
+                <span className="inline-flex items-center gap-1.5 text-xs" title="Shares"><IcoShare className="w-4 h-4 text-emerald-500"/> <b className="text-gray-800 dark:text-gray-200">{fmtNum(c.shares||0)}</b></span>
+              </div>
               {/* Comments (read + reply) — badge alerts when the ad has comments */}
               {c.adId && (
                 <div className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
                   {c.comments > 0 ? (
                     <button onClick={()=>setShowComments(s=>({...s,[c.id]:!s[c.id]}))}
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-full px-2.5 py-1">
-                      💬 {c.comments} comment{c.comments>1?'s':''} — {showComments[c.id] ? 'hide' : 'view & reply'}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-full pl-2 pr-3 py-1">
+                      <IcoChat className="w-3.5 h-3.5"/> {c.comments} — {showComments[c.id] ? 'hide' : 'reply'}
                     </button>
                   ) : (
                     <button onClick={()=>setShowComments(s=>({...s,[c.id]:!s[c.id]}))}
-                      className="text-[11px] font-semibold text-teal-600 dark:text-teal-400 hover:underline">
-                      {showComments[c.id] ? 'Hide comments' : '💬 View & reply to comments'}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-teal-600 dark:text-teal-400 hover:underline">
+                      <IcoChat className="w-3.5 h-3.5"/> {showComments[c.id] ? 'Hide comments' : 'Comments'}
                     </button>
                   )}
                   {showComments[c.id] && <AdCommentsPanel adId={c.adId} />}
@@ -5998,45 +6021,32 @@ function AdPerformanceView() {
                   </div>
                 );
               })()}
-              {/* ── Manage Variants button ────────────────────────────── */}
-              <button onClick={()=>openVariantModal(c)} disabled={!token}
-                className="mt-3 w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gradient-to-r from-teal-50 to-white dark:from-teal-900/20 dark:to-gray-900 hover:border-teal-400 hover:shadow-sm transition-all no-print disabled:opacity-50 group">
-                <span className="flex items-center gap-2">
-                  <span className="w-7 h-7 rounded-lg bg-teal-600 flex items-center justify-center text-white text-sm">⚙</span>
-                  <span className="text-left">
-                    <span className="block text-xs font-bold text-gray-800 dark:text-gray-100">Manage Variants &amp; A/B Test</span>
-                    <span className="block text-[10px] text-gray-400">Add ad sets, swap creatives, toggle on/off</span>
-                  </span>
-                </span>
-                <span className="text-teal-500 group-hover:translate-x-0.5 transition-transform">→</span>
-              </button>
-              {/* AI analysis */}
-              {(()=>{ const saved=(state.adAnalyses||[]).filter(a=>a.campaignId===c.id); const last=saved[0];
-              return (
-              <button onClick={()=>{ if(c.adId && !creativeCache[c.adId]) fetchCreative(c.adId); setAnalyzeCampaign(c); }}
-                className="mt-2 w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-violet-200 dark:border-violet-800 bg-gradient-to-r from-violet-50 to-white dark:from-violet-900/20 dark:to-gray-900 hover:border-violet-400 hover:shadow-sm transition-all no-print group">
-                <span className="flex items-center gap-2">
-                  <span className="w-7 h-7 rounded-lg bg-violet-600 flex items-center justify-center text-white text-sm">✨</span>
-                  <span className="text-left">
-                    <span className="block text-xs font-bold text-gray-800 dark:text-gray-100">Analyze Ad &amp; Suggest Improvements</span>
-                    <span className="block text-[10px] text-gray-400">{saved.length>0 ? `${saved.length} saved · last ${new Date(last.createdAt).toLocaleDateString('en-CA',{month:'short',day:'numeric'})}${last.result?.overallScore!=null?` · scored ${last.result.overallScore}`:''}` : 'AI review of creative, copy & results'}</span>
-                  </span>
-                </span>
-                <span className="flex items-center gap-1.5">
+              {/* Action rows — bigger icons, short labels */}
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 no-print">
+                <button onClick={()=>openVariantModal(c)} disabled={!token}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-teal-400 hover:shadow-sm transition-all disabled:opacity-50 group">
+                  <span className="w-9 h-9 rounded-lg bg-teal-600 flex items-center justify-center text-white flex-shrink-0"><IcoLayers className="w-5 h-5"/></span>
+                  <span className="text-sm font-bold text-gray-800 dark:text-gray-100 flex-1 text-left">Variants &amp; A/B</span>
+                  <span className="text-teal-500 group-hover:translate-x-0.5 transition-transform">→</span>
+                </button>
+                {(()=>{ const saved=(state.adAnalyses||[]).filter(a=>a.campaignId===c.id); return (
+                <button onClick={()=>{ if(c.adId && !creativeCache[c.adId]) fetchCreative(c.adId); setAnalyzeCampaign(c); }}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-violet-200 dark:border-violet-800 hover:border-violet-400 hover:shadow-sm transition-all group">
+                  <span className="w-9 h-9 rounded-lg bg-violet-600 flex items-center justify-center text-white flex-shrink-0"><IcoSpark className="w-5 h-5"/></span>
+                  <span className="text-sm font-bold text-gray-800 dark:text-gray-100 flex-1 text-left">AI Analysis</span>
                   {saved.length>0 && <span className="text-[10px] font-bold text-violet-600 bg-violet-100 dark:bg-violet-900/40 rounded-full px-2 py-0.5">{saved.length}</span>}
                   <span className="text-violet-500 group-hover:translate-x-0.5 transition-transform">→</span>
-                </span>
-              </button>
-              ); })()}
-              <div className="mt-2 flex items-center gap-3 text-[10px] text-gray-400">
-                <span>Ad Set: {c.adsetId}</span>
-                <span>·</span>
-                <span>Ad: {c.adId}</span>
-                <span>·</span>
-                <span>Created {c.createdAt ? new Date(c.createdAt).toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'}) : '—'}</span>
+                </button>
+                ); })()}
+              </div>
+              {/* Footer IDs — click any to copy */}
+              <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-800 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono text-gray-400">
+                <span className="cursor-pointer hover:text-teal-600" title="Copy campaign ID" onClick={()=>{navigator.clipboard?.writeText(String(c.campaignId||'')); showToast(dispatch,'Campaign ID copied');}}>Camp {c.campaignId} ⧉</span>
+                {c.adsetId && <span className="cursor-pointer hover:text-teal-600" title="Copy ad set ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adsetId)); showToast(dispatch,'Ad set ID copied');}}>Ad set {c.adsetId} ⧉</span>}
+                {c.adId && <span className="cursor-pointer hover:text-teal-600" title="Copy ad ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adId)); showToast(dispatch,'Ad ID copied');}}>Ad {c.adId} ⧉</span>}
               </div>
             </div>
-          ))}
+          ); })}
         </div>
       )}
 
