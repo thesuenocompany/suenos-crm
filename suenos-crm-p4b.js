@@ -5235,6 +5235,7 @@ const IcoSpark   = _Ico(<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 1
 const IcoChat    = _Ico(<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>);
 const IcoHeart   = _Ico(<path d="M20.8 5.6a5.5 5.5 0 0 0-7.8 0L12 6.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 22l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>, true);
 const IcoShare   = _Ico(<><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></>);
+const IcoImage   = _Ico(<><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></>);
 
 function AdPerformanceView() {
   const { state, dispatch } = useApp();
@@ -5888,24 +5889,28 @@ function AdPerformanceView() {
         </div>
       ) : (
         <div className="space-y-4">
-          {campaigns.map(c => { const eff = effStatusOf(c); const running = eff === 'ACTIVE'; const busy = campToggleBusy[c.id]; const alert = alertByCampaign[c.id]; return (
-            <div key={c.id} className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 p-4 sm:p-5 shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${running?'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400':'bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500'}`}>
+          {campaigns.map(c => { const eff = effStatusOf(c); const running = eff === 'ACTIVE'; const blocked = eff === 'CAMPAIGN_PAUSED'; const busy = campToggleBusy[c.id]; const alert = alertByCampaign[c.id];
+            const actBtn = 'flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-all';
+            const iconWrap = running?'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400':blocked?'bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400':'bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500';
+            const statusWord = running?'Running':blocked?'Not delivering':'Paused';
+            const statusTxt = running?'text-emerald-600 dark:text-emerald-400':blocked?'text-amber-600 dark:text-amber-400':'text-gray-400';
+            return (
+            <div key={c.id} className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-sm hover:shadow-md transition-shadow overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between gap-3 px-4 sm:px-5 pt-4 pb-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${iconWrap}`}>
                     {running ? <IcoPlay className="w-5 h-5"/> : <IcoPause className="w-5 h-5"/>}
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5">
                       <p className="text-base font-bold text-gray-900 dark:text-white truncate">{c.city}</p>
-                      <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${running?'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300':'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'}`}>{running?'Running':(eff||'Paused').replace(/_/g,' ').toLowerCase().replace(/\b\w/g,m=>m.toUpperCase())}</span>
-                      {alert && <span title={(alert.alertTypes||[]).map(t=>MKT_ALERT_LABELS[t]||t).join(', ')} className={`w-2.5 h-2.5 rounded-full ${alert.severity==='critical'?'bg-red-500':'bg-amber-500'}`}/>}
+                      {alert && <span title={(alert.alertTypes||[]).map(t=>MKT_ALERT_LABELS[t]||t).join(', ')} className={`w-2 h-2 rounded-full flex-shrink-0 ${alert.severity==='critical'?'bg-red-500':'bg-amber-500'}`}/>}
                     </div>
-                    <p className="text-[11px] text-gray-400 mt-0.5">
-                      {running ? 'Delivering' : 'Paused — not delivering'}
-                      {c.lastRefreshedAt && <span> · updated {fmtDate(c.lastRefreshedAt)}</span>}
+                    <p className="text-[11px] mt-0.5">
+                      <span className={`font-semibold ${statusTxt}`}>{statusWord}</span>
+                      {c.lastRefreshedAt && <span className="text-gray-400"> · {fmtDate(c.lastRefreshedAt)}</span>}
                     </p>
-                    {isAdmin && wxRulesFor(c).length>0 && <AdWeatherRuleTag rules={wxRulesFor(c)} control={wxControl} />}
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0 no-print">
@@ -5919,128 +5924,87 @@ function AdPerformanceView() {
                     {refreshingId===c.id ? <span className="animate-spin inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full"/> : <IcoRefresh className="w-4 h-4"/>}
                   </button>
                   <a href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=813974741538881&selected_campaign_ids=${c.campaignId}`} target="_blank" rel="noopener noreferrer" title="Open in Ads Manager"
-                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-blue-200 dark:border-blue-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20">
+                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800">
                     <IcoExternal className="w-4 h-4"/>
                   </a>
                 </div>
               </div>
-              {/* Metrics grid */}
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                {[
-                  { label:'Spend',   value: fmtMoney(c.spend) },
-                  { label:'Reach',   value: fmtNum(c.reach) },
-                  { label:'Impr.',   value: fmtNum(c.impressions) },
-                  { label:'Clicks',  value: fmtNum(c.clicks) },
-                  { label:'CTR',     value: fmtPct(c.ctr) },
-                  { label:'CPC',     value: c.cpc > 0 ? fmtMoney(c.cpc) : '—' },
-                ].map(m=>(
-                  <div key={m.label} className="bg-gray-50 dark:bg-gray-800/60 rounded-xl px-2 py-2 text-center">
-                    <p className="text-sm font-black text-gray-900 dark:text-white">{m.value}</p>
-                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mt-0.5">{m.label}</p>
+
+              {/* Weather automation */}
+              {isAdmin && wxRulesFor(c).length>0 && <div className="px-4 sm:px-5 pb-3"><AdWeatherRuleTag rules={wxRulesFor(c)} control={wxControl} /></div>}
+
+              {/* Performance */}
+              <div className="mx-4 sm:mx-5 mb-4 rounded-xl bg-gray-50 dark:bg-gray-800/40 p-3">
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Performance · 30 days</span>
+                  <div className="flex items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400">
+                    <span className="inline-flex items-center gap-1" title="Reactions"><IcoHeart className="w-3.5 h-3.5 text-rose-400"/><b className="text-gray-700 dark:text-gray-200">{fmtNum(c.reactions||0)}</b></span>
+                    <span className="inline-flex items-center gap-1" title="Comments"><IcoChat className="w-3.5 h-3.5 text-sky-400"/><b className="text-gray-700 dark:text-gray-200">{fmtNum(c.comments||0)}</b></span>
+                    <span className="inline-flex items-center gap-1" title="Shares"><IcoShare className="w-3.5 h-3.5 text-emerald-400"/><b className="text-gray-700 dark:text-gray-200">{fmtNum(c.shares||0)}</b></span>
                   </div>
-                ))}
-              </div>
-              {/* Engagement — icons, not emoji */}
-              <div className="flex items-center gap-5 mt-2 px-1 text-gray-500 dark:text-gray-400">
-                <span className="inline-flex items-center gap-1.5 text-xs" title="Reactions"><IcoHeart className="w-4 h-4 text-rose-500"/> <b className="text-gray-800 dark:text-gray-200">{fmtNum(c.reactions||0)}</b></span>
-                <span className="inline-flex items-center gap-1.5 text-xs" title="Comments"><IcoChat className="w-4 h-4 text-sky-500"/> <b className="text-gray-800 dark:text-gray-200">{fmtNum(c.comments||0)}</b></span>
-                <span className="inline-flex items-center gap-1.5 text-xs" title="Shares"><IcoShare className="w-4 h-4 text-emerald-500"/> <b className="text-gray-800 dark:text-gray-200">{fmtNum(c.shares||0)}</b></span>
-              </div>
-              {/* Comments (read + reply) — badge alerts when the ad has comments */}
-              {c.adId && (
-                <div className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
-                  {c.comments > 0 ? (
-                    <button onClick={()=>setShowComments(s=>({...s,[c.id]:!s[c.id]}))}
-                      className="inline-flex items-center gap-1.5 text-[11px] font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-full pl-2 pr-3 py-1">
-                      <IcoChat className="w-3.5 h-3.5"/> {c.comments} — {showComments[c.id] ? 'hide' : 'reply'}
-                    </button>
-                  ) : (
-                    <button onClick={()=>setShowComments(s=>({...s,[c.id]:!s[c.id]}))}
-                      className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-teal-600 dark:text-teal-400 hover:underline">
-                      <IcoChat className="w-3.5 h-3.5"/> {showComments[c.id] ? 'Hide comments' : 'Comments'}
-                    </button>
-                  )}
-                  {showComments[c.id] && <AdCommentsPanel adId={c.adId} />}
                 </div>
-              )}
-              {/* Ad Creative Preview */}
-              {c.adId && (() => {
-                const cr = creativeCache[c.adId];
-                const isExpanded = expandedCreative[c.id];
-                return (
-                  <div className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Ad Creative</span>
-                      <div className="flex items-center gap-2">
-                        {!cr && (
-                          <button onClick={()=>fetchCreative(c.adId)}
-                            className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline">
-                            Load preview
-                          </button>
-                        )}
-                        {cr && !cr.loading && (
-                          <button onClick={()=>setExpandedCreative(prev=>({...prev,[c.id]:!isExpanded}))}
-                            className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline">
-                            {isExpanded ? 'Collapse' : 'Expand'}
-                          </button>
-                        )}
-                      </div>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {[
+                    { label:'Spend',  value: fmtMoney(c.spend) },
+                    { label:'Reach',  value: fmtNum(c.reach) },
+                    { label:'Impr.',  value: fmtNum(c.impressions) },
+                    { label:'Clicks', value: fmtNum(c.clicks) },
+                    { label:'CTR',    value: fmtPct(c.ctr) },
+                    { label:'CPC',    value: c.cpc > 0 ? fmtMoney(c.cpc) : '—' },
+                  ].map(m=>(
+                    <div key={m.label} className="bg-white dark:bg-gray-900 rounded-lg px-1 py-2 text-center border border-gray-100 dark:border-gray-800">
+                      <p className="text-sm font-black text-gray-900 dark:text-white">{m.value}</p>
+                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mt-0.5">{m.label}</p>
                     </div>
-                    {cr?.loading && (
-                      <p className="text-[11px] text-gray-400 animate-pulse">Loading creative…</p>
-                    )}
-                    {cr?.error && (
-                      <p className="text-[11px] text-red-400">Could not load: {cr.error}</p>
-                    )}
+                  ))}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="px-4 sm:px-5 pb-4 grid grid-cols-2 lg:grid-cols-4 gap-2 no-print">
+                {c.adId && <button onClick={()=>{ if(!creativeCache[c.adId]) fetchCreative(c.adId); setExpandedCreative(p=>({...p,[c.id]:!p[c.id]})); }} className={actBtn}>
+                  <span className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center flex-shrink-0"><IcoImage className="w-4 h-4"/></span>
+                  <span className="text-xs font-bold text-gray-800 dark:text-gray-100">Creative</span>
+                </button>}
+                {c.adId && <button onClick={()=>setShowComments(s=>({...s,[c.id]:!s[c.id]}))} className={actBtn}>
+                  <span className="relative w-8 h-8 rounded-lg bg-sky-500 text-white flex items-center justify-center flex-shrink-0"><IcoChat className="w-4 h-4"/>{c.comments>0 && <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[8px] font-bold rounded-full min-w-[15px] h-[15px] px-0.5 flex items-center justify-center">{c.comments>99?'99+':c.comments}</span>}</span>
+                  <span className="text-xs font-bold text-gray-800 dark:text-gray-100">Comments</span>
+                </button>}
+                <button onClick={()=>openVariantModal(c)} disabled={!token} className={actBtn+' disabled:opacity-50'}>
+                  <span className="w-8 h-8 rounded-lg bg-teal-600 text-white flex items-center justify-center flex-shrink-0"><IcoLayers className="w-4 h-4"/></span>
+                  <span className="text-xs font-bold text-gray-800 dark:text-gray-100">Variants</span>
+                </button>
+                {(()=>{ const saved=(state.adAnalyses||[]).filter(a=>a.campaignId===c.id); return (
+                <button onClick={()=>{ if(c.adId && !creativeCache[c.adId]) fetchCreative(c.adId); setAnalyzeCampaign(c); }} className={actBtn}>
+                  <span className="relative w-8 h-8 rounded-lg bg-violet-600 text-white flex items-center justify-center flex-shrink-0"><IcoSpark className="w-4 h-4"/>{saved.length>0 && <span className="absolute -top-1 -right-1 bg-violet-500 text-white text-[8px] font-bold rounded-full min-w-[15px] h-[15px] px-0.5 flex items-center justify-center">{saved.length}</span>}</span>
+                  <span className="text-xs font-bold text-gray-800 dark:text-gray-100">AI review</span>
+                </button>
+                ); })()}
+              </div>
+
+              {/* Inline expansions */}
+              {c.adId && showComments[c.id] && <div className="px-4 sm:px-5 pb-4 -mt-1"><AdCommentsPanel adId={c.adId} /></div>}
+              {c.adId && expandedCreative[c.id] && (() => { const cr = creativeCache[c.adId]; return (
+                <div className="px-4 sm:px-5 pb-4 -mt-1">
+                  <div className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
+                    {cr?.loading && <p className="text-[11px] text-gray-400 animate-pulse">Loading creative…</p>}
+                    {cr?.error && <p className="text-[11px] text-red-400">Could not load: {cr.error}</p>}
                     {cr && !cr.loading && !cr.error && (
-                      <div className={`flex gap-3 ${isExpanded ? '' : 'items-center'}`}>
-                        {cr.thumbnail && (
-                          <div className={`flex-shrink-0 ${isExpanded ? 'w-40' : 'w-16 h-16'} overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800`}>
-                            <img src={cr.thumbnail} alt="Ad creative"
-                              className={`object-cover w-full ${isExpanded ? 'h-auto max-h-52' : 'h-16'}`}
-                              onError={e=>e.currentTarget.style.display='none'}/>
-                          </div>
-                        )}
+                      <div className="flex gap-3">
+                        {cr.thumbnail && <div className="flex-shrink-0 w-24 overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800"><img src={cr.thumbnail} alt="Ad creative" className="object-cover w-full h-auto max-h-40" onError={e=>e.currentTarget.style.display='none'}/></div>}
                         <div className="flex-1 min-w-0">
-                          {cr.headline && (
-                            <p className={`font-semibold text-gray-900 dark:text-white ${isExpanded ? 'text-sm' : 'text-[12px] truncate'}`}>
-                              {cr.headline}
-                            </p>
-                          )}
-                          {cr.body && (
-                            <p className={`text-gray-500 dark:text-gray-400 mt-0.5 ${isExpanded ? 'text-xs whitespace-pre-wrap' : 'text-[11px] line-clamp-2'}`}>
-                              {cr.body}
-                            </p>
-                          )}
-                          {!cr.headline && !cr.body && !cr.thumbnail && (
-                            <p className="text-[11px] text-gray-400 italic">No creative data returned from Meta</p>
-                          )}
+                          {cr.headline && <p className="font-semibold text-gray-900 dark:text-white text-sm">{cr.headline}</p>}
+                          {cr.body && <p className="text-gray-500 dark:text-gray-400 mt-0.5 text-xs whitespace-pre-wrap">{cr.body}</p>}
+                          {!cr.headline && !cr.body && !cr.thumbnail && <p className="text-[11px] text-gray-400 italic">No creative data returned from Meta</p>}
                         </div>
                       </div>
                     )}
                   </div>
-                );
-              })()}
-              {/* Action rows — bigger icons, short labels */}
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 no-print">
-                <button onClick={()=>openVariantModal(c)} disabled={!token}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-teal-400 hover:shadow-sm transition-all disabled:opacity-50 group">
-                  <span className="w-9 h-9 rounded-lg bg-teal-600 flex items-center justify-center text-white flex-shrink-0"><IcoLayers className="w-5 h-5"/></span>
-                  <span className="text-sm font-bold text-gray-800 dark:text-gray-100 flex-1 text-left">Variants &amp; A/B</span>
-                  <span className="text-teal-500 group-hover:translate-x-0.5 transition-transform">→</span>
-                </button>
-                {(()=>{ const saved=(state.adAnalyses||[]).filter(a=>a.campaignId===c.id); return (
-                <button onClick={()=>{ if(c.adId && !creativeCache[c.adId]) fetchCreative(c.adId); setAnalyzeCampaign(c); }}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-violet-200 dark:border-violet-800 hover:border-violet-400 hover:shadow-sm transition-all group">
-                  <span className="w-9 h-9 rounded-lg bg-violet-600 flex items-center justify-center text-white flex-shrink-0"><IcoSpark className="w-5 h-5"/></span>
-                  <span className="text-sm font-bold text-gray-800 dark:text-gray-100 flex-1 text-left">AI Analysis</span>
-                  {saved.length>0 && <span className="text-[10px] font-bold text-violet-600 bg-violet-100 dark:bg-violet-900/40 rounded-full px-2 py-0.5">{saved.length}</span>}
-                  <span className="text-violet-500 group-hover:translate-x-0.5 transition-transform">→</span>
-                </button>
-                ); })()}
-              </div>
+                </div>
+              ); })()}
+
               {/* Footer IDs — click any to copy */}
-              <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-800 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono text-gray-400">
+              <div className="px-4 sm:px-5 py-2 border-t border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/30 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono text-gray-400">
                 <span className="cursor-pointer hover:text-teal-600" title="Copy campaign ID" onClick={()=>{navigator.clipboard?.writeText(String(c.campaignId||'')); showToast(dispatch,'Campaign ID copied');}}>Camp {c.campaignId} ⧉</span>
                 {c.adsetId && <span className="cursor-pointer hover:text-teal-600" title="Copy ad set ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adsetId)); showToast(dispatch,'Ad set ID copied');}}>Ad set {c.adsetId} ⧉</span>}
                 {c.adId && <span className="cursor-pointer hover:text-teal-600" title="Copy ad ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adId)); showToast(dispatch,'Ad ID copied');}}>Ad {c.adId} ⧉</span>}
