@@ -183,14 +183,20 @@ function AdWeatherRuleTag({ rules, control }) {
   React.useEffect(() => {
     const token = (typeof localStorage!=='undefined' && localStorage.getItem('meta_access_token')) || '';
     if (!token) return;
-    let dead=false, backoffUntil=0;
+    let dead=false;
+    // Shared cross-component rate-limit guard (same key the Ad Performance page
+    // uses) so one component's "too many calls" pauses ALL Meta polling.
+    const rlUntil = () => { try { return Number(localStorage.getItem('meta_rl_until')||0); } catch { return 0; } };
+    const isRateLimited = () => Date.now() < rlUntil();
+    const tripRateLimit = () => { try { localStorage.setItem('meta_rl_until', String(Date.now()+30*60000)); } catch {} };
+    const isMetaRateErr = m => /too many calls|rate limit|request limit reached|#17|#4\b|reduce the amount/i.test(String(m||''));
     const ids = [...new Set((rules||[]).map(r=>r.targetId).filter(Boolean))];
     if (!ids.length) return;
     const pull = async () => {
-      if (dead || (typeof document!=='undefined' && document.visibilityState !== 'visible') || Date.now() < backoffUntil) return;
+      if (dead || (typeof document!=='undefined' && document.visibilityState !== 'visible') || isRateLimited()) return;
       try {
         const j = await fetch(`https://graph.facebook.com/v25.0/?ids=${encodeURIComponent(ids.join(','))}&fields=effective_status,status&access_token=${encodeURIComponent(token)}`).then(r=>r.json());
-        if (j.error) { if (/too many calls|rate limit|#17|#4\b/i.test(j.error.message||'')) backoffUntil = Date.now() + 15*60000; return; }
+        if (j.error) { if (isMetaRateErr(j.error.message)) tripRateLimit(); return; }
         if (!dead) setMetaStatus(s=>{ const n={...s}; for (const id of ids){ const o=j[id]; if(o) n[id] = o.effective_status || o.status || '?'; } return n; });
       } catch(_) {}
     };

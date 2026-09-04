@@ -5319,6 +5319,14 @@ function AdPerformanceView() {
   const token = localStorage.getItem('meta_access_token') || '';
   const BASE = 'https://graph.facebook.com/v25.0';
 
+  // ── Meta rate-limit guard (shared across the view) ─────────────────────────
+  // When Meta says "too many calls", we pause ALL automatic Meta fetching for a
+  // cool-down window so the account can recover instead of us re-tripping it.
+  const isMetaRateErr = m => /too many calls|rate limit|request limit reached|#17|#4\b|reduce the amount/i.test(String(m||''));
+  const rlUntil = () => { try { return Number(localStorage.getItem('meta_rl_until')||0); } catch { return 0; } };
+  const isRateLimited = () => Date.now() < rlUntil();
+  const tripRateLimit = () => { try { localStorage.setItem('meta_rl_until', String(Date.now()+30*60000)); } catch {} };
+
   // Parse Meta insights `actions` into engagement counts.
   // post_reaction = reactions/likes, comment = comments, post = shares of the post.
   function parseEngagement(actions) {
@@ -5383,6 +5391,11 @@ function AdPerformanceView() {
 
   async function refreshOne(c) {
     if (!token) { showToast(dispatch, 'No Meta token — paste your token in Digital Ad Planner first', 'error'); return; }
+    if (isRateLimited()) {
+      const mins = Math.max(1, Math.ceil((rlUntil() - Date.now())/60000));
+      showToast(dispatch, `Meta is rate-limiting this account — pausing calls for ~${mins} min. Try again shortly.`, 'error');
+      return;
+    }
     setRefreshingId(c.id);
     try {
       const [metrics] = await Promise.all([
@@ -5392,32 +5405,48 @@ function AdPerformanceView() {
       await dbUpdateCampaignMetrics(dispatch, c.id, metrics);
       showToast(dispatch, `Status: ${metrics.status}`);
     } catch(e) {
-      showToast(dispatch, 'Meta error: ' + String(e.message||e).slice(0,140), 'error');
+      const msg = String(e.message||e);
+      if (isMetaRateErr(msg)) { tripRateLimit(); showToast(dispatch, 'Meta is rate-limiting this account — pausing calls for ~30 min to let it recover.', 'error'); }
+      else showToast(dispatch, 'Meta error: ' + msg.slice(0,140), 'error');
     } finally {
       setRefreshingId(null);
     }
   }
 
-  async function refreshAll() {
-    if (!token) { showToast(dispatch, 'No Meta token — paste your token in Digital Ad Planner first', 'error'); return; }
+  async function refreshAll(opts) {
+    const silent = opts && opts.silent;
+    if (!token) { if (!silent) showToast(dispatch, 'No Meta token — paste your token in Digital Ad Planner first', 'error'); return; }
     if (!campaigns.length) return;
+    if (isRateLimited()) {
+      if (!silent) {
+        const mins = Math.max(1, Math.ceil((rlUntil() - Date.now())/60000));
+        showToast(dispatch, `Meta is rate-limiting this account — pausing calls for ~${mins} min. Try again shortly.`, 'error');
+      }
+      return;
+    }
     setRefreshing(true);
-    let ok = 0; let firstErr = null;
+    let ok = 0; let firstErr = null; let rateHit = false;
     for (const c of campaigns) {
+      if (rateHit) break; // stop hammering the moment Meta pushes back
       try {
         const metrics = await fetchCampaignMetrics(c);
         await dbUpdateCampaignMetrics(dispatch, c.id, metrics);
         ok++;
       } catch(e) {
-        if (!firstErr) firstErr = e.message || String(e);
+        const m = e.message || String(e);
+        if (!firstErr) firstErr = m;
+        if (isMetaRateErr(m)) { rateHit = true; tripRateLimit(); }
         console.warn('[Insights]', c.campaignId, e);
       }
       await new Promise(r=>setTimeout(r, 250)); // pace calls to avoid Meta rate limit
     }
     setRefreshing(false);
-    if (firstErr && ok === 0) {
-      showToast(dispatch, 'Meta error: ' + firstErr.slice(0,140), 'error');
-    } else {
+    if (ok > 0) { try { localStorage.setItem('meta_last_full', String(Date.now())); } catch {} }
+    if (rateHit) {
+      if (!silent) showToast(dispatch, 'Meta is rate-limiting this account — pausing calls for ~30 min to let it recover.', 'error');
+    } else if (firstErr && ok === 0) {
+      if (!silent) showToast(dispatch, 'Meta error: ' + firstErr.slice(0,140), 'error');
+    } else if (!silent) {
       showToast(dispatch, `✅ Refreshed ${ok} of ${campaigns.length}${firstErr ? ` (${campaigns.length-ok} failed: ${firstErr.slice(0,60)})` : ''}`);
     }
   }
@@ -5650,11 +5679,15 @@ function AdPerformanceView() {
     finally { setVariantBusy(false); }
   }
 
-  // Auto-refresh on first load and when date preset changes
+  // Auto-refresh on first load and when date preset changes — but never when
+  // Meta is rate-limiting us, and at most once every 15 min (insights numbers
+  // don't move fast, and re-tripping the account penalty on every visit is what
+  // kept "too many calls" from ever clearing). Manual Refresh still works.
   useEffect(() => {
-    if (token && campaigns.length > 0) {
-      refreshAll();
-    }
+    if (!token || campaigns.length === 0) { setDidAutoRefresh(true); return; }
+    let last = 0; try { last = Number(localStorage.getItem('meta_last_full')||0); } catch {}
+    const fresh = Date.now() - last < 15*60000;
+    if (!isRateLimited() && !fresh) refreshAll({ silent: true });
     setDidAutoRefresh(true);
   }, [datePreset]);
 
@@ -5664,21 +5697,22 @@ function AdPerformanceView() {
   const campIdsKey = campaigns.map(c=>c.id).join(',');
   useEffect(() => {
     if (!token || campaigns.length === 0) return;
-    let dead = false, backoffUntil = 0;
+    let dead = false;
     const ids = campaigns.map(c=>c.campaignId).filter(Boolean);
     const byCamp = {}; campaigns.forEach(c=>{ if (c.campaignId) byCamp[c.campaignId] = c.id; });
     const pull = async () => {
-      if (dead || document.visibilityState !== 'visible' || Date.now() < backoffUntil) return;
+      if (dead || document.visibilityState !== 'visible' || isRateLimited()) return;
       for (let i=0; i<ids.length; i+=50) {
         const chunk = ids.slice(i, i+50);
         try {
           const j = await fetch(`${BASE}/?ids=${encodeURIComponent(chunk.join(','))}&fields=effective_status,status&access_token=${token}`).then(r=>r.json());
-          if (j.error) { if (/too many calls|rate limit|#17|#4\b/i.test(j.error.message||'')) { backoffUntil = Date.now() + 15*60000; } break; }
+          if (j.error) { if (isMetaRateErr(j.error.message)) tripRateLimit(); break; }
           if (!dead) setLiveStatus(s => { const n = { ...s }; for (const cid of chunk) { const o = j[cid]; if (o) n[byCamp[cid]] = o.effective_status || o.status; } return n; });
         } catch(_) { break; }
         await new Promise(r=>setTimeout(r, 400));
       }
     };
+    pull(); // one initial read on open (guard-respecting) so status is fresh
     const t = setInterval(pull, 180000);
     return () => { dead = true; clearInterval(t); };
   }, [token, campIdsKey]);
@@ -5894,10 +5928,15 @@ function AdPerformanceView() {
         </div>
       ) : (
         <div className="space-y-4">
-          {campaigns.map(c => { const eff = effStatusOf(c); const running = eff === 'ACTIVE'; const blocked = eff === 'CAMPAIGN_PAUSED'; const busy = campToggleBusy[c.id]; const alert = alertByCampaign[c.id];
+          {campaigns.map(c => { const eff = effStatusOf(c);
+            // A campaign whose flight end-date has passed is NOT running, even if
+            // Meta still reports the campaign toggle as ACTIVE — delivery stopped
+            // on the schedule. Show "Ended" so the card matches reality.
+            const ended = !!(c.stopTime && new Date(c.stopTime) < new Date()) || eff === 'COMPLETED';
+            const running = eff === 'ACTIVE' && !ended; const blocked = eff === 'CAMPAIGN_PAUSED' && !ended; const busy = campToggleBusy[c.id]; const alert = alertByCampaign[c.id];
             const actBtn = 'flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-all';
             const iconWrap = running?'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400':blocked?'bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400':'bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500';
-            const statusWord = running?'Running':blocked?'Not delivering':'Paused';
+            const statusWord = ended?'Ended':running?'Running':blocked?'Not delivering':'Paused';
             const statusTxt = running?'text-emerald-600 dark:text-emerald-400':blocked?'text-amber-600 dark:text-amber-400':'text-gray-400';
             return (
             <div key={c.id} className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-sm hover:shadow-md transition-shadow overflow-hidden">
@@ -5919,9 +5958,9 @@ function AdPerformanceView() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0 no-print">
-                  <button onClick={()=>toggleCampaign(c)} disabled={busy || !token}
-                    title={running?'Turn campaign OFF':'Turn campaign ON'}
-                    className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${running?'bg-emerald-500':'bg-gray-300 dark:bg-gray-600'}`}>
+                  <button onClick={()=>toggleCampaign(c)} disabled={busy || !token || ended}
+                    title={ended?'Flight has ended — reactivate or extend the schedule in Ads Manager':running?'Turn campaign OFF':'Turn campaign ON'}
+                    className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${running?'bg-emerald-500':'bg-gray-300 dark:bg-gray-600'}`}>
                     <span className="inline-block rounded-full bg-white shadow transition-transform" style={{height:'22px',width:'22px',transform:running?'translateX(23px)':'translateX(3px)'}}/>
                   </button>
                   <button onClick={()=>refreshOne(c)} disabled={refreshingId===c.id} title="Refresh metrics"

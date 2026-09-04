@@ -351,7 +351,7 @@ function mapVisit(r) {
 function mapOrder(r) {
   return { id:r.id, accountId:r.account_id, productId:r.product_id, bottles:r.bottles,
     requestedDate:r.requested_date, storeId:r.store_id, status:r.status,
-    notes:r.notes||'', repId:r.rep_id, createdAt:r.created_at?.slice(0,10)||today(),
+    notes:r.notes||'', storeNote:r.store_note||'', repId:r.rep_id, createdAt:r.created_at?.slice(0,10)||today(),
     licenseNumber:r.license_number||'', orderedBy:r.ordered_by||'', billingEmail:r.billing_email||'',
     pstNumber:r.pst_number||'', subtotal:r.subtotal||0,
     pstAmount:r.pst_amount||0, gstAmount:r.gst_amount||0, total:r.total||0 };
@@ -1196,6 +1196,7 @@ async function dbAddOrder(dispatch, order) {
     id:order.id, account_id:order.accountId, product_id:order.productId,
     bottles:order.bottles, requested_date:order.requestedDate||null,
     store_id:order.storeId, status:order.status, notes:order.notes,
+    store_note:order.storeNote||null,
     rep_id:order.repId, license_number:order.licenseNumber||null,
     ordered_by:order.orderedBy||null, billing_email:order.billingEmail||null,
     pst_number:order.pstNumber||null, subtotal:order.subtotal||0,
@@ -1261,6 +1262,7 @@ async function dbUpdOrder(dispatch, order) {
     ordered_by:     order.orderedBy||null,
     billing_email:  order.billingEmail||null,
     account_id:     order.accountId||null,
+    store_note:     order.storeNote||null,
     pst_number:     order.pstNumber||null,
     subtotal:       order.subtotal||0,
     pst_amount:     order.pstAmount||0,
@@ -2677,7 +2679,7 @@ const NAV_CFG = {
     {s:'Main',    items:[{v:'dashboard',n:'dashboard',l:'Dashboard'},{v:'accounts',n:'accounts',l:'Accounts'},{v:'visits',n:'visits',l:'Visits'},{v:'tasks',n:'tasks',l:'Tasks'}]},
     {s:'Sales',   items:[{v:'orders',n:'orders',l:'Orders'},{v:'trade-leads',n:'accounts',l:'Trade Leads'},{v:'menu-placements',n:'menu',l:'Menu Placements'},{v:'retail-pricing',n:'tag',l:'Retail Pricing'}]},
     {s:'Field',   items:[{v:'tastings',n:'tastings',l:'Tastings'},{v:'calendar',n:'calendar',l:'Calendar'},{v:'sampling-request',n:'mail',l:'Sampling'}]},
-    {s:'Marketing',items:[{v:'cluster-ads',n:'ad',l:'Ad Planner'},{v:'media-desk',n:'ad',l:'Media Desk'},{v:'ad-creatives',n:'upload',l:'Creatives'},{v:'ad-performance',n:'reports',l:'Ad Performance'},{v:'social',n:'globe',l:'Social'},{v:'email-analytics',n:'mail',l:'Email'}]},
+    {s:'Marketing',items:[{v:'cluster-ads',n:'ad',l:'Ad Planner'},{v:'media-desk',n:'ad',l:'Media Desk'},{v:'weather-ads',n:'ad',l:'Weather Ads'},{v:'ad-creatives',n:'upload',l:'Creatives'},{v:'ad-performance',n:'reports',l:'Ad Performance'},{v:'social',n:'globe',l:'Social'},{v:'email-analytics',n:'mail',l:'Email'}]},
     {s:'Insights',items:[{v:'reports',n:'reports',l:'Reports'},{v:'map',n:'map',l:'Account Map'},{v:'web-analytics',n:'globe',l:'Website'}]},
     {s:'Promo Materials',items:[{v:'promo-orders-admin',n:'orders',l:'Orders'},{v:'manage-promo',n:'products',l:'Materials'},{v:'manage-promo-categories',n:'tag',l:'Categories'},{v:'promo-reporting',n:'reports',l:'Reporting'}]},
     {s:'Setup',   items:[{v:'products',n:'products',l:'Products'},{v:'stores',n:'stores',l:'Stores'},{v:'targets',n:'targets',l:'Targets'},{v:'sales-import',n:'download',l:'Sales Import'},{v:'users',n:'settings',l:'Team'},{v:'regions',n:'pin',l:'Regions'},{v:'licenses-admin',n:'accounts',l:'BC Licences'},{v:'dashboard-email',n:'mail',l:'Email Snapshot'},{v:'licence-prospects',n:'accounts',l:'Prospects'}]},
@@ -6913,6 +6915,7 @@ function EditOrderModal({ order, onClose }) {
     orderedBy:     order.orderedBy||'',
     billingEmail:  order.billingEmail||'',
     pstNumber:     order.pstNumber||'',
+    storeNote:     order.storeNote||'',
   });
   const [saving, setSaving] = useState(false);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
@@ -7019,6 +7022,10 @@ function EditOrderModal({ order, onClose }) {
           <div>
             <label style={lStyle}>Notes</label>
             <textarea value={form.notes} onChange={e=>set('notes',e.target.value)} style={{...iStyle,resize:'vertical',minHeight:60}} rows={2}/>
+          </div>
+          <div>
+            <label style={lStyle}>Note to store <span style={{fontWeight:400,textTransform:'none',color:'#9ca3af'}}>— in the order email, not on the invoice</span></label>
+            <textarea value={form.storeNote} onChange={e=>set('storeNote',e.target.value)} style={{...iStyle,resize:'vertical',minHeight:50}} rows={2} placeholder="e.g. Hold for pickup Friday"/>
           </div>
           {form.bottles && <div className="p-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 text-xs text-teal-800 dark:text-teal-400">{form.bottles} bottles = {(parseInt(form.bottles)/12).toFixed(1)} cases</div>}
           <div className="flex gap-2 pt-1">
@@ -12460,6 +12467,23 @@ function AdCommentsPanel({ adId }) {
   );
 }
 
+// ── Simple inline icons (bigger + cleaner than emoji) ────────────────────────
+const _Ico = (children, filled) => ({ className }) => (
+  <svg className={className||'w-5 h-5'} viewBox="0 0 24 24"
+    fill={filled?'currentColor':'none'} stroke={filled?'none':'currentColor'}
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+);
+const IcoPlay    = _Ico(<path d="M7 4v16l13-8z"/>, true);
+const IcoPause   = _Ico(<><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></>, true);
+const IcoRefresh = _Ico(<><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></>);
+const IcoExternal= _Ico(<><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></>);
+const IcoLayers  = _Ico(<><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></>);
+const IcoSpark   = _Ico(<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/>, true);
+const IcoChat    = _Ico(<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>);
+const IcoHeart   = _Ico(<path d="M20.8 5.6a5.5 5.5 0 0 0-7.8 0L12 6.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 22l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>, true);
+const IcoShare   = _Ico(<><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></>);
+const IcoImage   = _Ico(<><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></>);
+
 function AdPerformanceView() {
   const { state, dispatch } = useApp();
   const isAdmin = state.user?.role === 'admin';
@@ -12475,6 +12499,18 @@ function AdPerformanceView() {
   const allMetaCampaigns = visibleCampaigns.filter(c => (c.platform || 'meta') === 'meta');
   const [campFilter, setCampFilter] = React.useState('all');   // 'all' | region | `city:<city>`
   const [campSort, setCampSort]     = React.useState('newest'); // newest | spend | city
+  // Weather-rule overlay: which Meta objects have a weather rule (admin-only table)
+  const [wxRules, setWxRules] = React.useState([]);
+  const [wxControl, setWxControl] = React.useState([]);
+  React.useEffect(() => { if (!isAdmin) return; (async () => {
+    try {
+      const { data:r } = await sb.from('automation_rules').select('*').eq('trigger_type','weather');
+      setWxRules((r||[]).map(mapWxRule));
+      const { data:ctrl } = await sb.from('automation_control').select('target_id,controlling_rule_id');
+      setWxControl(ctrl||[]);
+    } catch(_) {}
+  })(); }, [isAdmin]);
+  const wxRulesFor = c => wxRules.filter(r => [c.campaignId, c.adsetId, c.adId].filter(Boolean).map(String).includes(String(r.targetId)));
   // Distinct regions & cities present in the campaigns
   const campRegions = [...new Set(allMetaCampaigns.map(c => cityToRegion(c.city) || c.city).filter(Boolean))].sort();
   const campCities  = [...new Set(allMetaCampaigns.map(c => c.city).filter(Boolean))].sort();
@@ -12522,12 +12558,21 @@ function AdPerformanceView() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingId, setRefreshingId] = useState(null);
   const [didAutoRefresh, setDidAutoRefresh] = useState(false);
+  const [liveStatus, setLiveStatus] = useState({});     // campaignId -> effective_status, polled live
   const [creativeCache, setCreativeCache] = useState({}); // { [adId]: { thumbnail, headline, body, loading, error } }
   const [expandedCreative, setExpandedCreative] = useState({}); // { [campaignId]: bool }
   const [showComments, setShowComments] = useState({}); // { [campaignId]: bool }
 
   const token = localStorage.getItem('meta_access_token') || '';
   const BASE = 'https://graph.facebook.com/v25.0';
+
+  // ── Meta rate-limit guard (shared across the view) ─────────────────────────
+  // When Meta says "too many calls", we pause ALL automatic Meta fetching for a
+  // cool-down window so the account can recover instead of us re-tripping it.
+  const isMetaRateErr = m => /too many calls|rate limit|request limit reached|#17|#4\b|reduce the amount/i.test(String(m||''));
+  const rlUntil = () => { try { return Number(localStorage.getItem('meta_rl_until')||0); } catch { return 0; } };
+  const isRateLimited = () => Date.now() < rlUntil();
+  const tripRateLimit = () => { try { localStorage.setItem('meta_rl_until', String(Date.now()+30*60000)); } catch {} };
 
   // Parse Meta insights `actions` into engagement counts.
   // post_reaction = reactions/likes, comment = comments, post = shares of the post.
@@ -12593,6 +12638,11 @@ function AdPerformanceView() {
 
   async function refreshOne(c) {
     if (!token) { showToast(dispatch, 'No Meta token — paste your token in Digital Ad Planner first', 'error'); return; }
+    if (isRateLimited()) {
+      const mins = Math.max(1, Math.ceil((rlUntil() - Date.now())/60000));
+      showToast(dispatch, `Meta is rate-limiting this account — pausing calls for ~${mins} min. Try again shortly.`, 'error');
+      return;
+    }
     setRefreshingId(c.id);
     try {
       const [metrics] = await Promise.all([
@@ -12602,32 +12652,48 @@ function AdPerformanceView() {
       await dbUpdateCampaignMetrics(dispatch, c.id, metrics);
       showToast(dispatch, `Status: ${metrics.status}`);
     } catch(e) {
-      showToast(dispatch, 'Meta error: ' + String(e.message||e).slice(0,140), 'error');
+      const msg = String(e.message||e);
+      if (isMetaRateErr(msg)) { tripRateLimit(); showToast(dispatch, 'Meta is rate-limiting this account — pausing calls for ~30 min to let it recover.', 'error'); }
+      else showToast(dispatch, 'Meta error: ' + msg.slice(0,140), 'error');
     } finally {
       setRefreshingId(null);
     }
   }
 
-  async function refreshAll() {
-    if (!token) { showToast(dispatch, 'No Meta token — paste your token in Digital Ad Planner first', 'error'); return; }
+  async function refreshAll(opts) {
+    const silent = opts && opts.silent;
+    if (!token) { if (!silent) showToast(dispatch, 'No Meta token — paste your token in Digital Ad Planner first', 'error'); return; }
     if (!campaigns.length) return;
+    if (isRateLimited()) {
+      if (!silent) {
+        const mins = Math.max(1, Math.ceil((rlUntil() - Date.now())/60000));
+        showToast(dispatch, `Meta is rate-limiting this account — pausing calls for ~${mins} min. Try again shortly.`, 'error');
+      }
+      return;
+    }
     setRefreshing(true);
-    let ok = 0; let firstErr = null;
+    let ok = 0; let firstErr = null; let rateHit = false;
     for (const c of campaigns) {
+      if (rateHit) break; // stop hammering the moment Meta pushes back
       try {
         const metrics = await fetchCampaignMetrics(c);
         await dbUpdateCampaignMetrics(dispatch, c.id, metrics);
         ok++;
       } catch(e) {
-        if (!firstErr) firstErr = e.message || String(e);
+        const m = e.message || String(e);
+        if (!firstErr) firstErr = m;
+        if (isMetaRateErr(m)) { rateHit = true; tripRateLimit(); }
         console.warn('[Insights]', c.campaignId, e);
       }
       await new Promise(r=>setTimeout(r, 250)); // pace calls to avoid Meta rate limit
     }
     setRefreshing(false);
-    if (firstErr && ok === 0) {
-      showToast(dispatch, 'Meta error: ' + firstErr.slice(0,140), 'error');
-    } else {
+    if (ok > 0) { try { localStorage.setItem('meta_last_full', String(Date.now())); } catch {} }
+    if (rateHit) {
+      if (!silent) showToast(dispatch, 'Meta is rate-limiting this account — pausing calls for ~30 min to let it recover.', 'error');
+    } else if (firstErr && ok === 0) {
+      if (!silent) showToast(dispatch, 'Meta error: ' + firstErr.slice(0,140), 'error');
+    } else if (!silent) {
       showToast(dispatch, `✅ Refreshed ${ok} of ${campaigns.length}${firstErr ? ` (${campaigns.length-ok} failed: ${firstErr.slice(0,60)})` : ''}`);
     }
   }
@@ -12734,7 +12800,7 @@ function AdPerformanceView() {
   // Master ON/OFF — activate/pause the whole hierarchy (campaign + ad sets + ads)
   const [campToggleBusy, setCampToggleBusy] = useState({});
   async function toggleCampaign(c) {
-    const isOn = c.status === 'ACTIVE';
+    const isOn = (liveStatus[c.id] || c.status) === 'ACTIVE';
     const goingLive = !isOn;
     if (goingLive) {
       if (!confirm(`Turn ON the "${c.city}" campaign? All its ad sets and ads will go ACTIVE and start spending their daily budgets.`)) return;
@@ -12860,13 +12926,44 @@ function AdPerformanceView() {
     finally { setVariantBusy(false); }
   }
 
-  // Auto-refresh on first load and when date preset changes
+  // Auto-refresh on first load and when date preset changes — but never when
+  // Meta is rate-limiting us, and at most once every 15 min (insights numbers
+  // don't move fast, and re-tripping the account penalty on every visit is what
+  // kept "too many calls" from ever clearing). Manual Refresh still works.
   useEffect(() => {
-    if (token && campaigns.length > 0) {
-      refreshAll();
-    }
+    if (!token || campaigns.length === 0) { setDidAutoRefresh(true); return; }
+    let last = 0; try { last = Number(localStorage.getItem('meta_last_full')||0); } catch {}
+    const fresh = Date.now() - last < 15*60000;
+    if (!isRateLimited() && !fresh) refreshAll({ silent: true });
     setDidAutoRefresh(true);
   }, [datePreset]);
+
+  // Keep on/off status live WITHOUT hammering Meta: one BATCHED status call for
+  // all campaigns (up to 50 ids per request), every 3 min, and only while the
+  // tab is visible. Backs off if Meta reports a rate limit.
+  const campIdsKey = campaigns.map(c=>c.id).join(',');
+  useEffect(() => {
+    if (!token || campaigns.length === 0) return;
+    let dead = false;
+    const ids = campaigns.map(c=>c.campaignId).filter(Boolean);
+    const byCamp = {}; campaigns.forEach(c=>{ if (c.campaignId) byCamp[c.campaignId] = c.id; });
+    const pull = async () => {
+      if (dead || document.visibilityState !== 'visible' || isRateLimited()) return;
+      for (let i=0; i<ids.length; i+=50) {
+        const chunk = ids.slice(i, i+50);
+        try {
+          const j = await fetch(`${BASE}/?ids=${encodeURIComponent(chunk.join(','))}&fields=effective_status,status&access_token=${token}`).then(r=>r.json());
+          if (j.error) { if (isMetaRateErr(j.error.message)) tripRateLimit(); break; }
+          if (!dead) setLiveStatus(s => { const n = { ...s }; for (const cid of chunk) { const o = j[cid]; if (o) n[byCamp[cid]] = o.effective_status || o.status; } return n; });
+        } catch(_) { break; }
+        await new Promise(r=>setTimeout(r, 400));
+      }
+    };
+    pull(); // one initial read on open (guard-respecting) so status is fresh
+    const t = setInterval(pull, 180000);
+    return () => { dead = true; clearInterval(t); };
+  }, [token, campIdsKey]);
+  const effStatusOf = c => liveStatus[c.id] || c.status;
 
   const fmtMoney = n => n === 0 ? '$0.00' : `$${n.toFixed(2)}`;
   const fmtPct   = n => n === 0 ? '0.00%' : `${n.toFixed(2)}%`;
@@ -13078,188 +13175,133 @@ function AdPerformanceView() {
         </div>
       ) : (
         <div className="space-y-4">
-          {campaigns.map(c => (
-            <div key={c.id} className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 p-4 sm:p-5 shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-bold text-gray-900 dark:text-white">{c.city}</p>
-                    {statusChip(c.status)}
-                    {deliveryChip(c)}
-                    {alertByCampaign[c.id] && (
-                      <span title={(alertByCampaign[c.id].alertTypes||[]).map(t=>MKT_ALERT_LABELS[t]||t).join(', ')}
-                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${alertByCampaign[c.id].severity==='critical'?'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300':'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
-                        ⚠️ Declining
-                      </span>
-                    )}
+          {campaigns.map(c => { const eff = effStatusOf(c);
+            // A campaign whose flight end-date has passed is NOT running, even if
+            // Meta still reports the campaign toggle as ACTIVE — delivery stopped
+            // on the schedule. Show "Ended" so the card matches reality.
+            const ended = !!(c.stopTime && new Date(c.stopTime) < new Date()) || eff === 'COMPLETED';
+            const running = eff === 'ACTIVE' && !ended; const blocked = eff === 'CAMPAIGN_PAUSED' && !ended; const busy = campToggleBusy[c.id]; const alert = alertByCampaign[c.id];
+            const actBtn = 'flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-all';
+            const iconWrap = running?'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400':blocked?'bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400':'bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500';
+            const statusWord = ended?'Ended':running?'Running':blocked?'Not delivering':'Paused';
+            const statusTxt = running?'text-emerald-600 dark:text-emerald-400':blocked?'text-amber-600 dark:text-amber-400':'text-gray-400';
+            return (
+            <div key={c.id} className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-sm hover:shadow-md transition-shadow overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between gap-3 px-4 sm:px-5 pt-4 pb-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${iconWrap}`}>
+                    {running ? <IcoPlay className="w-5 h-5"/> : <IcoPause className="w-5 h-5"/>}
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-0.5 font-mono">Campaign {c.campaignId}</p>
-                  {c.lastRefreshedAt && (
-                    <p className="text-[10px] text-gray-400 mt-0.5">
-                      Updated {fmtDate(c.lastRefreshedAt)}
-                      {c.startTime && <span> · Started {fmtDate(c.startTime)}</span>}
-                      {c.stopTime  && <span> · {new Date(c.stopTime)<new Date()?'Ended':'Ends'} {fmtDate(c.stopTime)}</span>}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {/* Master ON/OFF */}
-                  <div className="flex items-center gap-1.5 no-print">
-                    <span className={`text-[10px] font-bold uppercase ${c.status==='ACTIVE'?'text-emerald-600':'text-gray-400'}`}>
-                      {campToggleBusy[c.id] ? '…' : (c.status==='ACTIVE'?'On':'Off')}
-                    </span>
-                    <button onClick={()=>toggleCampaign(c)} disabled={campToggleBusy[c.id] || !token}
-                      title={c.status==='ACTIVE'?'Turn campaign OFF':'Turn campaign ON'}
-                      className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${c.status==='ACTIVE'?'bg-emerald-500':'bg-gray-300 dark:bg-gray-600'}`}>
-                      <span className="inline-block rounded-full bg-white shadow transition-transform" style={{height:'18px',width:'18px',transform:c.status==='ACTIVE'?'translateX(22px)':'translateX(3px)'}}/>
-                    </button>
-                  </div>
-                  <a href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=813974741538881&selected_campaign_ids=${c.campaignId}`}
-                    target="_blank" rel="noopener noreferrer"
-                    className="px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-blue-200 dark:border-blue-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
-                    Ads Manager ↗
-                  </a>
-                  <button onClick={()=>refreshOne(c)} disabled={refreshingId===c.id}
-                    className="px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50">
-                    {refreshingId===c.id
-                      ? <span className="animate-spin inline-block w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full"></span>
-                      : '↻'}
-                  </button>
-                </div>
-              </div>
-              {/* Metrics grid */}
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                {[
-                  { label:'Spend',       value: fmtMoney(c.spend) },
-                  { label:'Impressions', value: fmtNum(c.impressions) },
-                  { label:'Clicks',      value: fmtNum(c.clicks) },
-                  { label:'Reach',       value: fmtNum(c.reach) },
-                  { label:'CTR',         value: fmtPct(c.ctr) },
-                  { label:'CPC',         value: c.cpc > 0 ? fmtMoney(c.cpc) : '—' },
-                  { label:'👍 Reactions', value: fmtNum(c.reactions||0) },
-                  { label:'💬 Comments',  value: fmtNum(c.comments||0) },
-                  { label:'↗ Shares',     value: fmtNum(c.shares||0) },
-                ].map(m=>(
-                  <div key={m.label} className="bg-gray-50 dark:bg-gray-800/60 rounded-xl px-2 py-2 text-center">
-                    <p className="text-sm font-black text-gray-900 dark:text-white">{m.value}</p>
-                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mt-0.5">{m.label}</p>
-                  </div>
-                ))}
-              </div>
-              {/* Comments (read + reply) — badge alerts when the ad has comments */}
-              {c.adId && (
-                <div className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
-                  {c.comments > 0 ? (
-                    <button onClick={()=>setShowComments(s=>({...s,[c.id]:!s[c.id]}))}
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-full px-2.5 py-1">
-                      💬 {c.comments} comment{c.comments>1?'s':''} — {showComments[c.id] ? 'hide' : 'view & reply'}
-                    </button>
-                  ) : (
-                    <button onClick={()=>setShowComments(s=>({...s,[c.id]:!s[c.id]}))}
-                      className="text-[11px] font-semibold text-teal-600 dark:text-teal-400 hover:underline">
-                      {showComments[c.id] ? 'Hide comments' : '💬 View & reply to comments'}
-                    </button>
-                  )}
-                  {showComments[c.id] && <AdCommentsPanel adId={c.adId} />}
-                </div>
-              )}
-              {/* Ad Creative Preview */}
-              {c.adId && (() => {
-                const cr = creativeCache[c.adId];
-                const isExpanded = expandedCreative[c.id];
-                return (
-                  <div className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Ad Creative</span>
-                      <div className="flex items-center gap-2">
-                        {!cr && (
-                          <button onClick={()=>fetchCreative(c.adId)}
-                            className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline">
-                            Load preview
-                          </button>
-                        )}
-                        {cr && !cr.loading && (
-                          <button onClick={()=>setExpandedCreative(prev=>({...prev,[c.id]:!isExpanded}))}
-                            className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline">
-                            {isExpanded ? 'Collapse' : 'Expand'}
-                          </button>
-                        )}
-                      </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-base font-bold text-gray-900 dark:text-white truncate">{c.city}</p>
+                      {alert && <span title={(alert.alertTypes||[]).map(t=>MKT_ALERT_LABELS[t]||t).join(', ')} className={`w-2 h-2 rounded-full flex-shrink-0 ${alert.severity==='critical'?'bg-red-500':'bg-amber-500'}`}/>}
                     </div>
-                    {cr?.loading && (
-                      <p className="text-[11px] text-gray-400 animate-pulse">Loading creative…</p>
-                    )}
-                    {cr?.error && (
-                      <p className="text-[11px] text-red-400">Could not load: {cr.error}</p>
-                    )}
+                    <p className="text-[11px] mt-0.5">
+                      <span className={`font-semibold ${statusTxt}`}>{statusWord}</span>
+                      {c.lastRefreshedAt && <span className="text-gray-400"> · {fmtDate(c.lastRefreshedAt)}</span>}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0 no-print">
+                  <button onClick={()=>toggleCampaign(c)} disabled={busy || !token || ended}
+                    title={ended?'Flight has ended — reactivate or extend the schedule in Ads Manager':running?'Turn campaign OFF':'Turn campaign ON'}
+                    className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${running?'bg-emerald-500':'bg-gray-300 dark:bg-gray-600'}`}>
+                    <span className="inline-block rounded-full bg-white shadow transition-transform" style={{height:'22px',width:'22px',transform:running?'translateX(23px)':'translateX(3px)'}}/>
+                  </button>
+                  <button onClick={()=>refreshOne(c)} disabled={refreshingId===c.id} title="Refresh metrics"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50">
+                    {refreshingId===c.id ? <span className="animate-spin inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full"/> : <IcoRefresh className="w-4 h-4"/>}
+                  </button>
+                  <a href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=813974741538881&selected_campaign_ids=${c.campaignId}`} target="_blank" rel="noopener noreferrer" title="Open in Ads Manager"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800">
+                    <IcoExternal className="w-4 h-4"/>
+                  </a>
+                </div>
+              </div>
+
+              {/* Weather automation */}
+              {isAdmin && wxRulesFor(c).length>0 && <div className="px-4 sm:px-5 pb-3"><AdWeatherRuleTag rules={wxRulesFor(c)} control={wxControl} /></div>}
+
+              {/* Performance */}
+              <div className="mx-4 sm:mx-5 mb-4 rounded-xl bg-gray-50 dark:bg-gray-800/40 p-3">
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Performance · 30 days</span>
+                  <div className="flex items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400">
+                    <span className="inline-flex items-center gap-1" title="Reactions"><IcoHeart className="w-3.5 h-3.5 text-rose-400"/><b className="text-gray-700 dark:text-gray-200">{fmtNum(c.reactions||0)}</b></span>
+                    <span className="inline-flex items-center gap-1" title="Comments"><IcoChat className="w-3.5 h-3.5 text-sky-400"/><b className="text-gray-700 dark:text-gray-200">{fmtNum(c.comments||0)}</b></span>
+                    <span className="inline-flex items-center gap-1" title="Shares"><IcoShare className="w-3.5 h-3.5 text-emerald-400"/><b className="text-gray-700 dark:text-gray-200">{fmtNum(c.shares||0)}</b></span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {[
+                    { label:'Spend',  value: fmtMoney(c.spend) },
+                    { label:'Reach',  value: fmtNum(c.reach) },
+                    { label:'Impr.',  value: fmtNum(c.impressions) },
+                    { label:'Clicks', value: fmtNum(c.clicks) },
+                    { label:'CTR',    value: fmtPct(c.ctr) },
+                    { label:'CPC',    value: c.cpc > 0 ? fmtMoney(c.cpc) : '—' },
+                  ].map(m=>(
+                    <div key={m.label} className="bg-white dark:bg-gray-900 rounded-lg px-1 py-2 text-center border border-gray-100 dark:border-gray-800">
+                      <p className="text-sm font-black text-gray-900 dark:text-white">{m.value}</p>
+                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mt-0.5">{m.label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="px-4 sm:px-5 pb-4 grid grid-cols-2 lg:grid-cols-4 gap-2 no-print">
+                {c.adId && <button onClick={()=>{ if(!creativeCache[c.adId]) fetchCreative(c.adId); setExpandedCreative(p=>({...p,[c.id]:!p[c.id]})); }} className={actBtn}>
+                  <span className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center flex-shrink-0"><IcoImage className="w-4 h-4"/></span>
+                  <span className="text-xs font-bold text-gray-800 dark:text-gray-100">Creative</span>
+                </button>}
+                {c.adId && <button onClick={()=>setShowComments(s=>({...s,[c.id]:!s[c.id]}))} className={actBtn}>
+                  <span className="relative w-8 h-8 rounded-lg bg-sky-500 text-white flex items-center justify-center flex-shrink-0"><IcoChat className="w-4 h-4"/>{c.comments>0 && <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[8px] font-bold rounded-full min-w-[15px] h-[15px] px-0.5 flex items-center justify-center">{c.comments>99?'99+':c.comments}</span>}</span>
+                  <span className="text-xs font-bold text-gray-800 dark:text-gray-100">Comments</span>
+                </button>}
+                <button onClick={()=>openVariantModal(c)} disabled={!token} className={actBtn+' disabled:opacity-50'}>
+                  <span className="w-8 h-8 rounded-lg bg-teal-600 text-white flex items-center justify-center flex-shrink-0"><IcoLayers className="w-4 h-4"/></span>
+                  <span className="text-xs font-bold text-gray-800 dark:text-gray-100">Variants</span>
+                </button>
+                {(()=>{ const saved=(state.adAnalyses||[]).filter(a=>a.campaignId===c.id); return (
+                <button onClick={()=>{ if(c.adId && !creativeCache[c.adId]) fetchCreative(c.adId); setAnalyzeCampaign(c); }} className={actBtn}>
+                  <span className="relative w-8 h-8 rounded-lg bg-violet-600 text-white flex items-center justify-center flex-shrink-0"><IcoSpark className="w-4 h-4"/>{saved.length>0 && <span className="absolute -top-1 -right-1 bg-violet-500 text-white text-[8px] font-bold rounded-full min-w-[15px] h-[15px] px-0.5 flex items-center justify-center">{saved.length}</span>}</span>
+                  <span className="text-xs font-bold text-gray-800 dark:text-gray-100">AI review</span>
+                </button>
+                ); })()}
+              </div>
+
+              {/* Inline expansions */}
+              {c.adId && showComments[c.id] && <div className="px-4 sm:px-5 pb-4 -mt-1"><AdCommentsPanel adId={c.adId} /></div>}
+              {c.adId && expandedCreative[c.id] && (() => { const cr = creativeCache[c.adId]; return (
+                <div className="px-4 sm:px-5 pb-4 -mt-1">
+                  <div className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
+                    {cr?.loading && <p className="text-[11px] text-gray-400 animate-pulse">Loading creative…</p>}
+                    {cr?.error && <p className="text-[11px] text-red-400">Could not load: {cr.error}</p>}
                     {cr && !cr.loading && !cr.error && (
-                      <div className={`flex gap-3 ${isExpanded ? '' : 'items-center'}`}>
-                        {cr.thumbnail && (
-                          <div className={`flex-shrink-0 ${isExpanded ? 'w-40' : 'w-16 h-16'} overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800`}>
-                            <img src={cr.thumbnail} alt="Ad creative"
-                              className={`object-cover w-full ${isExpanded ? 'h-auto max-h-52' : 'h-16'}`}
-                              onError={e=>e.currentTarget.style.display='none'}/>
-                          </div>
-                        )}
+                      <div className="flex gap-3">
+                        {cr.thumbnail && <div className="flex-shrink-0 w-24 overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800"><img src={cr.thumbnail} alt="Ad creative" className="object-cover w-full h-auto max-h-40" onError={e=>e.currentTarget.style.display='none'}/></div>}
                         <div className="flex-1 min-w-0">
-                          {cr.headline && (
-                            <p className={`font-semibold text-gray-900 dark:text-white ${isExpanded ? 'text-sm' : 'text-[12px] truncate'}`}>
-                              {cr.headline}
-                            </p>
-                          )}
-                          {cr.body && (
-                            <p className={`text-gray-500 dark:text-gray-400 mt-0.5 ${isExpanded ? 'text-xs whitespace-pre-wrap' : 'text-[11px] line-clamp-2'}`}>
-                              {cr.body}
-                            </p>
-                          )}
-                          {!cr.headline && !cr.body && !cr.thumbnail && (
-                            <p className="text-[11px] text-gray-400 italic">No creative data returned from Meta</p>
-                          )}
+                          {cr.headline && <p className="font-semibold text-gray-900 dark:text-white text-sm">{cr.headline}</p>}
+                          {cr.body && <p className="text-gray-500 dark:text-gray-400 mt-0.5 text-xs whitespace-pre-wrap">{cr.body}</p>}
+                          {!cr.headline && !cr.body && !cr.thumbnail && <p className="text-[11px] text-gray-400 italic">No creative data returned from Meta</p>}
                         </div>
                       </div>
                     )}
                   </div>
-                );
-              })()}
-              {/* ── Manage Variants button ────────────────────────────── */}
-              <button onClick={()=>openVariantModal(c)} disabled={!token}
-                className="mt-3 w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gradient-to-r from-teal-50 to-white dark:from-teal-900/20 dark:to-gray-900 hover:border-teal-400 hover:shadow-sm transition-all no-print disabled:opacity-50 group">
-                <span className="flex items-center gap-2">
-                  <span className="w-7 h-7 rounded-lg bg-teal-600 flex items-center justify-center text-white text-sm">⚙</span>
-                  <span className="text-left">
-                    <span className="block text-xs font-bold text-gray-800 dark:text-gray-100">Manage Variants &amp; A/B Test</span>
-                    <span className="block text-[10px] text-gray-400">Add ad sets, swap creatives, toggle on/off</span>
-                  </span>
-                </span>
-                <span className="text-teal-500 group-hover:translate-x-0.5 transition-transform">→</span>
-              </button>
-              {/* AI analysis */}
-              {(()=>{ const saved=(state.adAnalyses||[]).filter(a=>a.campaignId===c.id); const last=saved[0];
-              return (
-              <button onClick={()=>{ if(c.adId && !creativeCache[c.adId]) fetchCreative(c.adId); setAnalyzeCampaign(c); }}
-                className="mt-2 w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-violet-200 dark:border-violet-800 bg-gradient-to-r from-violet-50 to-white dark:from-violet-900/20 dark:to-gray-900 hover:border-violet-400 hover:shadow-sm transition-all no-print group">
-                <span className="flex items-center gap-2">
-                  <span className="w-7 h-7 rounded-lg bg-violet-600 flex items-center justify-center text-white text-sm">✨</span>
-                  <span className="text-left">
-                    <span className="block text-xs font-bold text-gray-800 dark:text-gray-100">Analyze Ad &amp; Suggest Improvements</span>
-                    <span className="block text-[10px] text-gray-400">{saved.length>0 ? `${saved.length} saved · last ${new Date(last.createdAt).toLocaleDateString('en-CA',{month:'short',day:'numeric'})}${last.result?.overallScore!=null?` · scored ${last.result.overallScore}`:''}` : 'AI review of creative, copy & results'}</span>
-                  </span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  {saved.length>0 && <span className="text-[10px] font-bold text-violet-600 bg-violet-100 dark:bg-violet-900/40 rounded-full px-2 py-0.5">{saved.length}</span>}
-                  <span className="text-violet-500 group-hover:translate-x-0.5 transition-transform">→</span>
-                </span>
-              </button>
+                </div>
               ); })()}
-              <div className="mt-2 flex items-center gap-3 text-[10px] text-gray-400">
-                <span>Ad Set: {c.adsetId}</span>
-                <span>·</span>
-                <span>Ad: {c.adId}</span>
-                <span>·</span>
-                <span>Created {c.createdAt ? new Date(c.createdAt).toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'}) : '—'}</span>
+
+              {/* Footer IDs — click any to copy */}
+              <div className="px-4 sm:px-5 py-2 border-t border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/30 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono text-gray-400">
+                <span className="cursor-pointer hover:text-teal-600" title="Copy campaign ID" onClick={()=>{navigator.clipboard?.writeText(String(c.campaignId||'')); showToast(dispatch,'Campaign ID copied');}}>Camp {c.campaignId} ⧉</span>
+                {c.adsetId && <span className="cursor-pointer hover:text-teal-600" title="Copy ad set ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adsetId)); showToast(dispatch,'Ad set ID copied');}}>Ad set {c.adsetId} ⧉</span>}
+                {c.adId && <span className="cursor-pointer hover:text-teal-600" title="Copy ad ID" onClick={()=>{navigator.clipboard?.writeText(String(c.adId)); showToast(dispatch,'Ad ID copied');}}>Ad {c.adId} ⧉</span>}
               </div>
             </div>
-          ))}
+          ); })}
         </div>
       )}
 
@@ -13298,6 +13340,7 @@ function AdPerformanceView() {
                         </button>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{a.name}</p>
+                          <p className="text-[10px] text-gray-400 font-mono cursor-pointer hover:text-teal-600 truncate" title="Click to copy ad set ID" onClick={()=>{navigator.clipboard?.writeText(String(a.id)); showToast(dispatch,'Ad set ID copied');}}>ID {a.id} ⧉</p>
                           <p className="text-[11px] text-gray-400">
                             <span className={on?'text-emerald-600 font-semibold':''}>{on ? '● Running' : (a.status||'Paused')}</span>
                             {a.dailyBudget ? ` · $${a.dailyBudget}/day` : ''}
@@ -18078,6 +18121,797 @@ function VoiceVisitButton({ className }) {
   );
 }
 
+// ─── WEATHER TRIGGERED ADS (Phase 1: rules + provider preview) ───────────────
+// Admin-only. A generic automation engine (trigger → condition → action →
+// rollback → reporting); weather is the first trigger type. Phase 1 covers the
+// rule CRUD, the dashboard shell, and a live "Check weather now" preview via the
+// weather-provider edge function. Meta actions/approval/scheduling land in
+// later phases. Self-contained (loads its own data via sb), like MediaDeskView.
+
+const WX_DEFAULT_ADACCOUNT = '813974741538881'; // reuse the existing Sueños ad account
+const CA_PROVINCES = ['BC','AB','SK','MB','ON','QC','NB','NS','PE','NL','YT','NT','NU'];
+const WX_CONDITIONS = [
+  { key:'temp_above',          label:'Temperature above (now)',        unit:'°C' },
+  { key:'temp_below',          label:'Temperature below (now)',        unit:'°C' },
+  { key:'forecast_high_above', label:'Forecast high above',            unit:'°C' },
+  { key:'forecast_low_below',  label:'Forecast low below',             unit:'°C' },
+  { key:'consecutive_above',   label:'Consecutive days high above',    unit:'°C', consec:true },
+  { key:'consecutive_below',   label:'Consecutive days low below',     unit:'°C', consec:true },
+  { key:'precip_prob',         label:'Rain / precip probability ≥',    unit:'%'  },
+  { key:'snow',                label:'Snowfall ≥',                     unit:'cm' },
+  { key:'severe_alert',        label:'Severe weather alert',           unit:'',  eccc:true },
+  { key:'air_quality',         label:'Air quality (US-AQI) ≥',         unit:'AQI' },
+];
+const WX_START = [
+  { key:'activate',            label:'Activate (turn on)' },
+  { key:'set_budget',          label:'Set daily budget' },
+  { key:'activate_and_budget', label:'Activate + set budget' },
+];
+const WX_STOP = [
+  { key:'pause',    label:'Pause (turn off)' },
+  { key:'restore',  label:'Restore previous status & budget' },
+  { key:'set_budget', label:'Set budget back to $X' },
+];
+
+const wxCond = k => WX_CONDITIONS.find(c => c.key === k) || WX_CONDITIONS[0];
+const wxDollars = c => (c == null ? '' : (Number(c) / 100).toFixed(2));
+const wxCents = d => (d === '' || d == null ? null : Math.round(parseFloat(d) * 100));
+const wxNum = n => (n == null ? '—' : (Math.round(Number(n) * 10) / 10));
+
+function mapWxRule(r) {
+  return {
+    id:r.id, name:r.name, triggerType:r.trigger_type, active:r.active, approvalRequired:r.approval_required,
+    province:r.province||'', city:r.city||'', latitude:r.latitude, longitude:r.longitude, radiusKm:r.radius_km,
+    metaAdAccountId:r.meta_ad_account_id||'', targetType:r.target_type||'adset', targetId:r.target_id||'', targetName:r.target_name||'',
+    weatherCondition:r.weather_condition||'', threshold:r.threshold, consecutiveDays:r.consecutive_days, leadTimeHours:r.lead_time_hours||0,
+    startAction:r.start_action||'activate', stopAction:r.stop_action||'pause',
+    dailyBudgetCents:r.daily_budget_cents, budgetAdjustPct:r.budget_adjust_pct, maxIncrementalSpendCents:r.max_incremental_spend_cents,
+    createdAt:r.created_at,
+  };
+}
+
+// Shared condition evaluation (client preview now; the scheduler reuses the same logic server-side in Phase 4).
+function evalWeatherCondition(rule, w) {
+  if (!w) return { met:false, detail:'No weather data' };
+  const th = Number(rule.threshold);
+  const daysAhead = Math.max(1, Math.ceil((Number(rule.leadTimeHours)||0)/24)) || 3;
+  const win = (w.daily||[]).slice(0, daysAhead);
+  const cur = w.current?.tempC;
+  const f = wxNum;
+  switch (rule.weatherCondition) {
+    case 'temp_above': return { met: cur!=null && cur>=th, detail:`Current ${f(cur)}°C vs ≥ ${th}°C` };
+    case 'temp_below': return { met: cur!=null && cur<=th, detail:`Current ${f(cur)}°C vs ≤ ${th}°C` };
+    case 'forecast_high_above': { const h=win.find(d=>d.highC!=null&&d.highC>=th); return { met:!!h, detail:h?`High ${f(h.highC)}°C on ${h.date} (≥ ${th})`:`No forecast high ≥ ${th}°C in ${win.length}d` }; }
+    case 'forecast_low_below':  { const h=win.find(d=>d.lowC!=null&&d.lowC<=th);  return { met:!!h, detail:h?`Low ${f(h.lowC)}°C on ${h.date} (≤ ${th})`:`No forecast low ≤ ${th}°C in ${win.length}d` }; }
+    case 'consecutive_above': { const n=Number(rule.consecutiveDays)||2; let run=0,mx=0; win.forEach(d=>{ if(d.highC!=null&&d.highC>=th){run++;mx=Math.max(mx,run);}else run=0;}); return { met:mx>=n, detail:`${mx} consecutive day(s) ≥ ${th}°C (need ${n})` }; }
+    case 'consecutive_below': { const n=Number(rule.consecutiveDays)||2; let run=0,mx=0; win.forEach(d=>{ if(d.lowC!=null&&d.lowC<=th){run++;mx=Math.max(mx,run);}else run=0;}); return { met:mx>=n, detail:`${mx} consecutive day(s) ≤ ${th}°C (need ${n})` }; }
+    case 'precip_prob': { const h=win.find(d=>d.precipProbMax!=null&&d.precipProbMax>=th); return { met:!!h, detail:h?`${h.precipProbMax}% precip on ${h.date} (≥ ${th}%)`:`No day ≥ ${th}% precip in ${win.length}d` }; }
+    case 'snow': { const t=th||0.1; const h=win.find(d=>d.snowfallCm!=null&&d.snowfallCm>=t); return { met:!!h, detail:h?`${f(h.snowfallCm)}cm snow on ${h.date}`:`No snowfall ≥ ${t}cm in ${win.length}d` }; }
+    case 'air_quality': { const a=w.airQuality?.usAqi; return { met:a!=null&&a>=th, detail:a!=null?`US-AQI ${a} (≥ ${th})`:'AQI unavailable' }; }
+    case 'severe_alert': return { met:false, detail:'Severe alerts need the ECCC provider (not yet configured)' };
+    default: return { met:false, detail:'Choose a weather condition' };
+  }
+}
+
+function wxRuleSummary(r) {
+  const c = wxCond(r.weatherCondition);
+  const consec = c.consec ? `${r.consecutiveDays||2}× ` : '';
+  const lead = r.leadTimeHours ? ` · ${r.leadTimeHours}h ahead` : '';
+  return `${consec}${c.label} ${r.threshold ?? ''}${c.unit}${lead}`;
+}
+
+// Plain-English one-liner describing what a rule does.
+function wxPlainRule(r) {
+  const c = r.city || 'this area'; const th = r.threshold;
+  switch (r.weatherCondition) {
+    case 'temp_above':          return `Runs this ad when it's ${th}°C or hotter in ${c}`;
+    case 'temp_below':          return `Runs this ad when it's ${th}°C or colder in ${c}`;
+    case 'forecast_high_above': return `Runs this ad when ${c} is forecast to reach ${th}°C or hotter`;
+    case 'forecast_low_below':  return `Runs this ad when ${c} is forecast to drop to ${th}°C or colder`;
+    case 'consecutive_above':   return `Runs this ad after ${r.consecutiveDays||2}+ days of highs at/above ${th}°C in ${c}`;
+    case 'consecutive_below':   return `Runs this ad after ${r.consecutiveDays||2}+ days of lows at/below ${th}°C in ${c}`;
+    case 'precip_prob':         return `Runs this ad when the chance of rain in ${c} is ${th}% or higher`;
+    case 'snow':                return `Runs this ad when ${c} is forecast ${th}cm+ of snow`;
+    case 'air_quality':         return `Runs this ad when air quality (AQI) in ${c} hits ${th} or higher`;
+    case 'severe_alert':        return `Runs this ad during a severe-weather alert in ${c}`;
+    default:                    return `Weather rule for ${c}`;
+  }
+}
+// Short friendly reading of the current relevant measurement.
+function wxFriendlyReading(r, w) {
+  const d0 = (w.daily||[])[0]||{}; const rnd = n => (n==null?'—':Math.round(n));
+  switch (r.weatherCondition) {
+    case 'temp_above': case 'temp_below':          return `${rnd(w.current?.tempC)}°C right now`;
+    case 'forecast_high_above': case 'consecutive_above': return `today's high ${rnd(d0.highC)}°C`;
+    case 'forecast_low_below':  case 'consecutive_below': return `today's low ${rnd(d0.lowC)}°C`;
+    case 'precip_prob':         return `${d0.precipProbMax ?? '—'}% chance of rain today`;
+    case 'snow':                return `${rnd(d0.snowfallCm)}cm snow forecast`;
+    case 'air_quality':         return `AQI ${w.airQuality?.usAqi ?? '—'}`;
+    default:                    return '';
+  }
+}
+
+// ── tiny inline weather/status icons ─────────────────────────────────────────
+const _WIco = (children) => ({ className }) => (
+  <svg className={className||'w-4 h-4'} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+);
+const WIcoThermo  = _WIco(<path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0Z"/>);
+const WIcoSun     = _WIco(<><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></>);
+const WIcoDroplet = _WIco(<path d="M12 2.7s6 6.3 6 10.3a6 6 0 1 1-12 0c0-4 6-10.3 6-10.3Z"/>);
+const WIcoSnow    = _WIco(<><path d="M12 2v20M5 6l14 12M19 6 5 18"/></>);
+const WIcoWind    = _WIco(<path d="M4 12h11a3 3 0 1 0-3-3M4 16h7a2.5 2.5 0 1 1-2.5 2.5"/>);
+const WIcoCheck   = _WIco(<path d="M20 6 9 17l-5-5"/>);
+const WIcoArrow   = _WIco(<path d="M5 12h14M13 6l6 6-6 6"/>);
+const wxGlyph = { thermo:WIcoThermo, sun:WIcoSun, droplet:WIcoDroplet, snow:WIcoSnow, wind:WIcoWind };
+
+// Big-number reading pieces for the "current" segment.
+function wxReadingParts(r, w) {
+  const d0 = (w.daily||[])[0]||{}; const rnd = n => (n==null?'—':Math.round(n));
+  switch (r.weatherCondition) {
+    case 'temp_above':          return { value:rnd(w.current?.tempC), unit:'°', caption:'Now',        glyph:'sun' };
+    case 'temp_below':          return { value:rnd(w.current?.tempC), unit:'°', caption:'Now',        glyph:'thermo' };
+    case 'forecast_high_above': case 'consecutive_above': return { value:rnd(d0.highC), unit:'°', caption:'Today high', glyph:'sun' };
+    case 'forecast_low_below':  case 'consecutive_below': return { value:rnd(d0.lowC),  unit:'°', caption:'Today low',  glyph:'thermo' };
+    case 'precip_prob':         return { value:(d0.precipProbMax ?? '—'), unit:'%', caption:'Rain',   glyph:'droplet' };
+    case 'snow':                return { value:rnd(d0.snowfallCm), unit:'cm', caption:'Snow',         glyph:'snow' };
+    case 'air_quality':         return { value:(w.airQuality?.usAqi ?? '—'), unit:'', caption:'Air',  glyph:'wind' };
+    default:                    return { value:'—', unit:'', caption:'', glyph:'thermo' };
+  }
+}
+// Threshold chip label for the "target" segment.
+function wxTargetLabel(r) {
+  const th = r.threshold;
+  switch (r.weatherCondition) {
+    case 'temp_above': case 'forecast_high_above': case 'consecutive_above': return `≥ ${th}°`;
+    case 'temp_below': case 'forecast_low_below':  case 'consecutive_below': return `≤ ${th}°`;
+    case 'precip_prob': return `≥ ${th}%`;
+    case 'snow':        return `≥ ${th}cm`;
+    case 'air_quality': return `AQI ≥ ${th}`;
+    case 'severe_alert':return 'Alert';
+    default:            return `${th ?? ''}`;
+  }
+}
+
+// Compact weather-rule status shown on Ad Performance cards. For each rule
+// attached to that Meta object it shows the condition, whether it's MET right
+// now (live from the provider), and whether the rule currently controls the ad.
+function AdWeatherRuleTag({ rules, control }) {
+  const [live, setLive] = React.useState({});   // ruleId -> { loading?, w?, err? }
+  const [metaStatus, setMetaStatus] = React.useState({}); // targetId -> effective_status (live)
+  const controllingIds = new Set((control||[]).filter(c=>c.controlling_rule_id).map(c=>String(c.target_id)));
+  const key = (rules||[]).map(r=>r.id).join(',');
+
+  // Weather condition (one-time on mount) — the forecast doesn't move minute to minute.
+  React.useEffect(() => { let dead=false; (async () => {
+    for (const r of (rules||[])) {
+      setLive(s=>({ ...s, [r.id]:{ loading:true } }));
+      try {
+        let lat=r.latitude, lng=r.longitude;
+        if (lat==null || lng==null) {
+          const g = await sb.functions.invoke('weather-provider', { body:{ action:'geocode', city:r.city, province:r.province } });
+          const f = g.data?.results?.[0]; if (f) { lat=f.latitude; lng=f.longitude; }
+        }
+        if (lat==null || lng==null) throw new Error('no location');
+        const res = await sb.functions.invoke('weather-provider', { body:{ action:'weather', latitude:lat, longitude:lng } });
+        if (res.data?.error || res.error) throw new Error(res.data?.error || res.error?.message || 'weather failed');
+        if (!dead) setLive(s=>({ ...s, [r.id]:{ w:res.data } }));
+      } catch (e) { if (!dead) setLive(s=>({ ...s, [r.id]:{ err:(e.message||String(e)) } })); }
+    }
+  })(); return ()=>{ dead=true; }; }, [key]);
+
+  // Live on/off status of the controlled Meta object — ONE batched call for all
+  // targets, on mount then every 3 min, only while the tab is visible, backing
+  // off on a Meta rate-limit. (Keeps calls tiny to respect ads-management limits.)
+  React.useEffect(() => {
+    const token = (typeof localStorage!=='undefined' && localStorage.getItem('meta_access_token')) || '';
+    if (!token) return;
+    let dead=false;
+    // Shared cross-component rate-limit guard (same key the Ad Performance page
+    // uses) so one component's "too many calls" pauses ALL Meta polling.
+    const rlUntil = () => { try { return Number(localStorage.getItem('meta_rl_until')||0); } catch { return 0; } };
+    const isRateLimited = () => Date.now() < rlUntil();
+    const tripRateLimit = () => { try { localStorage.setItem('meta_rl_until', String(Date.now()+30*60000)); } catch {} };
+    const isMetaRateErr = m => /too many calls|rate limit|request limit reached|#17|#4\b|reduce the amount/i.test(String(m||''));
+    const ids = [...new Set((rules||[]).map(r=>r.targetId).filter(Boolean))];
+    if (!ids.length) return;
+    const pull = async () => {
+      if (dead || (typeof document!=='undefined' && document.visibilityState !== 'visible') || isRateLimited()) return;
+      try {
+        const j = await fetch(`https://graph.facebook.com/v25.0/?ids=${encodeURIComponent(ids.join(','))}&fields=effective_status,status&access_token=${encodeURIComponent(token)}`).then(r=>r.json());
+        if (j.error) { if (isMetaRateErr(j.error.message)) tripRateLimit(); return; }
+        if (!dead) setMetaStatus(s=>{ const n={...s}; for (const id of ids){ const o=j[id]; if(o) n[id] = o.effective_status || o.status || '?'; } return n; });
+      } catch(_) {}
+    };
+    pull();
+    const t = setInterval(pull, 180000);
+    return ()=>{ dead=true; clearInterval(t); };
+  }, [key]);
+
+  const isRunning = s => s === 'ACTIVE';
+  const statusLabel = s => !s ? '' : (s==='ACTIVE'?'● Running':(s.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,m=>m.toUpperCase())));
+
+  return (
+    <div className="mt-1.5 space-y-1.5">
+      {(rules||[]).map(r=>{
+        const l = live[r.id];
+        const ev = l?.w ? evalWeatherCondition(r, l.w) : null;
+        const met = !!ev?.met;
+        const inControl = controllingIds.has(String(r.targetId));
+        const eff = metaStatus[r.targetId];
+        const parts = l?.w ? wxReadingParts(r, l.w) : null;
+        const Glyph = wxGlyph[parts?.glyph || 'thermo'];
+        const adState = eff === 'ACTIVE'          ? { word:'Live',    dot:'bg-emerald-500', txt:'text-emerald-600 dark:text-emerald-400' }
+                      : eff === 'CAMPAIGN_PAUSED'  ? { word:'Blocked', dot:'bg-amber-500',   txt:'text-amber-600 dark:text-amber-400' }
+                      : eff                        ? { word:'Paused',  dot:'bg-gray-400',    txt:'text-gray-500 dark:text-gray-400' }
+                      :                              { word:'—',       dot:'bg-gray-300',    txt:'text-gray-400' };
+        let note = null;
+        if (!r.active) note = { t:'Automation is off', tone:'muted' };
+        else if (eff === 'CAMPAIGN_PAUSED') note = { t:'Campaign is off — switch it on above to deliver', tone:'warn' };
+        else if (met && r.approvalRequired && eff !== 'ACTIVE' && !inControl) note = { t:'Approve in Weather Ads to turn on', tone:'warn' };
+        const noteCls = t => t==='warn' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300' : 'bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400';
+        return (
+          <div key={r.id} className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden bg-white dark:bg-gray-900" title={wxPlainRule(r)}>
+            {/* header strip */}
+            <div className="flex items-center justify-between px-2.5 py-1 bg-teal-50 dark:bg-teal-900/20 border-b border-teal-100/70 dark:border-teal-800/60">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Glyph className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 flex-shrink-0"/>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-teal-700 dark:text-teal-300 truncate">Weather · {r.city}</span>
+              </div>
+              <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full flex-shrink-0 ${r.approvalRequired?'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300':'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300'}`}>{r.approvalRequired?'Approval':'Auto'}</span>
+            </div>
+            {/* flow: reading → target → ad */}
+            <div className="flex items-center">
+              <div className="flex-1 px-1 py-2 text-center">
+                {l?.loading ? <div className="text-lg font-black text-gray-300 animate-pulse">··</div>
+                  : parts ? <div className="text-lg font-black leading-none text-gray-800 dark:text-gray-100">{parts.value}<span className="text-xs font-bold text-gray-400">{parts.unit}</span></div>
+                  : <div className="text-lg font-black text-gray-300">—</div>}
+                <div className="text-[9px] uppercase tracking-wide text-gray-400 mt-0.5">{parts?.caption || 'Now'}</div>
+              </div>
+              <WIcoArrow className="w-4 h-4 text-gray-300 dark:text-gray-600 flex-shrink-0"/>
+              <div className="flex-1 px-1 py-2 text-center">
+                <div className={`inline-flex items-center gap-1 text-sm font-bold ${met?'text-emerald-600 dark:text-emerald-400':'text-gray-500 dark:text-gray-400'}`}>
+                  {ev && (met
+                    ? <span className="w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center"><WIcoCheck className="w-3 h-3"/></span>
+                    : <span className="w-4 h-4 rounded-full border-2 border-gray-300 dark:border-gray-600"/>)}
+                  {wxTargetLabel(r)}
+                </div>
+                <div className={`text-[9px] uppercase tracking-wide mt-0.5 ${met?'text-emerald-500':'text-gray-400'}`}>{ev ? (met?'Met':'Target') : 'Target'}</div>
+              </div>
+              <WIcoArrow className="w-4 h-4 text-gray-300 dark:text-gray-600 flex-shrink-0"/>
+              <div className="flex-1 px-1 py-2 text-center">
+                <div className="inline-flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${adState.dot}`}/>
+                  <span className={`text-sm font-bold ${adState.txt}`}>{adState.word}</span>
+                </div>
+                <div className="text-[9px] uppercase tracking-wide text-gray-400 mt-0.5">Ad</div>
+              </div>
+            </div>
+            {note && <div className={`px-2.5 py-1 text-[10px] font-semibold border-t border-gray-100 dark:border-gray-800 ${noteCls(note.tone)}`}>{note.t}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Live weather check (provider preview) ────────────────────────────────────
+function WeatherCheckModal({ rule, onClose }) {
+  const { dispatch } = useApp();
+  const [loading, setLoading] = React.useState(true);
+  const [err, setErr] = React.useState('');
+  const [w, setW] = React.useState(null);
+  React.useEffect(() => { (async () => {
+    setLoading(true); setErr('');
+    try {
+      let lat = rule.latitude, lng = rule.longitude;
+      if (lat == null || lng == null) {
+        const g = await sb.functions.invoke('weather-provider', { body:{ action:'geocode', city:rule.city, province:rule.province } });
+        const first = g.data?.results?.[0];
+        if (!first) throw new Error('Could not locate '+(rule.city||'that city'));
+        lat = first.latitude; lng = first.longitude;
+      }
+      const res = await sb.functions.invoke('weather-provider', { body:{ action:'weather', latitude:lat, longitude:lng } });
+      if (res.error || res.data?.error) throw new Error(res.data?.error || res.error?.message || 'Weather fetch failed');
+      setW(res.data);
+    } catch (e) { setErr(e.message || String(e)); }
+    setLoading(false);
+  })(); }, [rule.id]);
+
+  const evalr = w ? evalWeatherCondition(rule, w) : null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 space-y-3" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">🌤 Weather now — {rule.city || 'rule'}</h3>
+          <button onClick={onClose} className="text-gray-400 text-xl leading-none">×</button>
+        </div>
+        {loading && <p className="text-sm text-gray-500">Checking {rule.city}…</p>}
+        {err && <p className="text-sm text-red-600">{err}</p>}
+        {w && (
+          <>
+            <div className={`rounded-lg p-3 text-sm ${evalr.met ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200' : 'bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'}`}>
+              <p className="font-semibold">{evalr.met ? '✅ Trigger condition MET' : '○ Condition not met'}</p>
+              <p className="text-xs mt-0.5">{wxRuleSummary(rule)} — {evalr.detail}</p>
+            </div>
+            <p className="text-xs text-gray-500">Now: <b>{wxNum(w.current?.tempC)}°C</b>{w.airQuality?.usAqi!=null?` · AQI ${w.airQuality.usAqi}`:''} · via {w.provider}</p>
+            <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead><tr className="text-gray-400 text-left"><th className="px-2 py-1">Day</th><th className="px-2 py-1">High</th><th className="px-2 py-1">Low</th><th className="px-2 py-1">Precip</th><th className="px-2 py-1">Snow</th></tr></thead>
+                <tbody>
+                  {(w.daily||[]).slice(0,7).map(d=>(
+                    <tr key={d.date} className="border-t border-gray-100 dark:border-gray-700">
+                      <td className="px-2 py-1">{d.date.slice(5)}</td>
+                      <td className="px-2 py-1">{wxNum(d.highC)}°</td>
+                      <td className="px-2 py-1">{wxNum(d.lowC)}°</td>
+                      <td className="px-2 py-1">{d.precipProbMax!=null?d.precipProbMax+'%':'—'}</td>
+                      <td className="px-2 py-1">{d.snowfallCm?wxNum(d.snowfallCm)+'cm':'—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {w.missing?.length>0 && <p className="text-[11px] text-amber-600 dark:text-amber-400">Not yet available from this provider: {w.missing.map(m=>m.split(' — ')[0]).join(', ')}.</p>}
+            <p className="text-[11px] text-gray-400">Preview only — no Meta changes are made in Phase 1.</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Create / edit rule ───────────────────────────────────────────────────────
+function WeatherRuleModal({ rule, onClose, onSaved }) {
+  const { state, dispatch } = useApp();
+  const editing = !!rule;
+  const [f, setF] = React.useState(rule ? { ...rule } : {
+    name:'', province:'BC', city:'', latitude:null, longitude:null, radiusKm:'',
+    metaAdAccountId:WX_DEFAULT_ADACCOUNT, targetType:'adset', targetId:'', targetName:'',
+    weatherCondition:'forecast_high_above', threshold:30, consecutiveDays:2, leadTimeHours:72,
+    startAction:'activate', stopAction:'pause', dailyBudget:'', maxIncrementalSpend:'',
+    approvalRequired:true, active:false,
+  });
+  const [busy, setBusy] = React.useState(false);
+  const set = (k,v) => setF(s => ({ ...s, [k]: v }));
+  const cond = wxCond(f.weatherCondition);
+
+  // budgets shown in dollars in the form; converted to cents on save
+  const dailyBudget = editing ? wxDollars(rule.dailyBudgetCents) : f.dailyBudget;
+  const maxSpend = editing ? wxDollars(rule.maxIncrementalSpendCents) : f.maxIncrementalSpend;
+
+  const save = async () => {
+    if (!f.name.trim()) { showToast(dispatch,'Name the rule','error'); return; }
+    if (!f.targetId.trim()) { showToast(dispatch,'Enter the Meta campaign/ad set/ad ID','error'); return; }
+    if (!f.stopAction) { showToast(dispatch,'A stop/rollback action is required','error'); return; }
+    if (f.active && !f.approvalRequired && !wxCents(f.maxIncrementalSpend ?? maxSpend)) {
+      showToast(dispatch,'Automatic mode needs a maximum incremental spend (hard ceiling)','error'); return;
+    }
+    setBusy(true);
+    try {
+      // Geocode city → lat/lng if not set
+      let lat = f.latitude, lng = f.longitude;
+      if ((lat == null || lng == null) && f.city.trim()) {
+        const g = await sb.functions.invoke('weather-provider', { body:{ action:'geocode', city:f.city, province:f.province } });
+        const first = g.data?.results?.[0];
+        if (first) { lat = first.latitude; lng = first.longitude; }
+      }
+      const row = {
+        name:f.name.trim(), trigger_type:'weather', active:!!f.active, approval_required:!!f.approvalRequired,
+        province:f.province||null, city:f.city.trim()||null, latitude:lat, longitude:lng,
+        radius_km: f.radiusKm===''?null:Number(f.radiusKm),
+        meta_ad_account_id:f.metaAdAccountId.trim()||null, target_type:f.targetType, target_id:f.targetId.trim(), target_name:f.targetName.trim()||null,
+        weather_condition:f.weatherCondition, threshold: f.threshold===''?null:Number(f.threshold),
+        consecutive_days: cond.consec ? (Number(f.consecutiveDays)||2) : null,
+        lead_time_hours: Number(f.leadTimeHours)||0,
+        start_action:f.startAction, stop_action:f.stopAction,
+        daily_budget_cents: wxCents(f.dailyBudget ?? dailyBudget),
+        max_incremental_spend_cents: wxCents(f.maxIncrementalSpend ?? maxSpend),
+      };
+      if (editing) { const { error } = await sb.from('automation_rules').update(row).eq('id', rule.id); if (error) throw error; }
+      else { const { error } = await sb.from('automation_rules').insert({ ...row, created_by: state.user.id }); if (error) throw error; }
+      showToast(dispatch, editing ? 'Rule updated' : 'Rule created'); onSaved && onSaved(); onClose();
+    } catch (e) { showToast(dispatch, 'Save failed: '+(e.message||e), 'error'); }
+    setBusy(false);
+  };
+
+  const inp = 'w-full text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-700';
+  const lbl = 'block text-xs font-semibold text-gray-500 mb-1';
+  const autoMode = f.active && !f.approvalRequired;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 w-full max-w-2xl max-h-[92vh] overflow-y-auto p-5 space-y-4" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-start justify-between">
+          <h3 className="font-semibold text-lg">{editing ? 'Edit weather rule' : 'New weather rule'}</h3>
+          <button onClick={onClose} className="text-gray-400 text-xl leading-none">×</button>
+        </div>
+
+        <div><label className={lbl}>Rule name</label>
+          <input className={inp} value={f.name} onChange={e=>set('name',e.target.value)} placeholder="e.g. Okanagan Heat Campaign" /></div>
+
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Location (Canada)</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div><label className={lbl}>Province</label>
+            <select className={inp} value={f.province} onChange={e=>set('province',e.target.value)}>{CA_PROVINCES.map(p=><option key={p} value={p}>{p}</option>)}</select></div>
+          <div className="col-span-1 sm:col-span-2"><label className={lbl}>City / region</label>
+            <input className={inp} value={f.city} onChange={e=>{ set('city',e.target.value); set('latitude',null); set('longitude',null); }} placeholder="Kelowna" /></div>
+          <div><label className={lbl}>Radius km <span className="text-gray-400 font-normal">(opt)</span></label>
+            <input type="number" className={inp} value={f.radiusKm} onChange={e=>set('radiusKm',e.target.value)} /></div>
+        </div>
+
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Meta target (existing ad account)</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div><label className={lbl}>Ad account ID</label><input className={inp} value={f.metaAdAccountId} onChange={e=>set('metaAdAccountId',e.target.value)} /></div>
+          <div><label className={lbl}>Target type</label>
+            <select className={inp} value={f.targetType} onChange={e=>set('targetType',e.target.value)}><option value="campaign">Campaign</option><option value="adset">Ad set</option><option value="ad">Ad</option></select></div>
+          <div><label className={lbl}>Target ID</label><input className={inp} value={f.targetId} onChange={e=>set('targetId',e.target.value)} placeholder="Meta object id" /></div>
+          <div><label className={lbl}>Label <span className="text-gray-400 font-normal">(opt)</span></label><input className={inp} value={f.targetName} onChange={e=>set('targetName',e.target.value)} placeholder="Summer Margarita" /></div>
+        </div>
+
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Trigger</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="col-span-2"><label className={lbl}>Weather condition</label>
+            <select className={inp} value={f.weatherCondition} onChange={e=>set('weatherCondition',e.target.value)}>{WX_CONDITIONS.map(c=><option key={c.key} value={c.key}>{c.label}</option>)}</select></div>
+          <div><label className={lbl}>Threshold {cond.unit&&`(${cond.unit})`}</label>
+            <input type="number" className={inp} value={f.threshold} onChange={e=>set('threshold',e.target.value)} disabled={cond.key==='severe_alert'} /></div>
+          {cond.consec
+            ? <div><label className={lbl}>Consecutive days</label><input type="number" min="1" className={inp} value={f.consecutiveDays} onChange={e=>set('consecutiveDays',e.target.value)} /></div>
+            : <div><label className={lbl}>Lead time (hours)</label><input type="number" min="0" className={inp} value={f.leadTimeHours} onChange={e=>set('leadTimeHours',e.target.value)} /></div>}
+        </div>
+        {cond.eccc && <p className="text-[11px] text-amber-600 dark:text-amber-400">Severe-weather alerts need the ECCC provider, which isn’t configured yet — this condition won’t fire until it’s wired.</p>}
+
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Actions & budget</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={lbl}>When triggered</label>
+            <select className={inp} value={f.startAction} onChange={e=>set('startAction',e.target.value)}>{WX_START.map(a=><option key={a.key} value={a.key}>{a.label}</option>)}</select></div>
+          <div><label className={lbl}>Stop / rollback <span className="text-red-500">*</span></label>
+            <select className={inp} value={f.stopAction} onChange={e=>set('stopAction',e.target.value)}>{WX_STOP.map(a=><option key={a.key} value={a.key}>{a.label}</option>)}</select></div>
+          <div><label className={lbl}>Daily budget ($)</label>
+            <input type="number" step="0.01" className={inp} value={f.dailyBudget ?? dailyBudget} onChange={e=>set('dailyBudget',e.target.value)} placeholder="25.00" /></div>
+          <div><label className={lbl}>Max incremental spend ($) <span className="text-red-500">— hard ceiling</span></label>
+            <input type="number" step="0.01" className={inp} value={f.maxIncrementalSpend ?? maxSpend} onChange={e=>set('maxIncrementalSpend',e.target.value)} placeholder="e.g. 200.00" /></div>
+        </div>
+        <p className="text-[11px] text-gray-400">The engine will never set a budget above the daily budget, and will force a rollback once total triggered spend hits the max incremental spend — a hard kill switch independent of Meta’s account cap.</p>
+
+        <div className="flex flex-wrap items-center gap-4 pt-1">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={f.approvalRequired} onChange={e=>set('approvalRequired',e.target.checked)} className="accent-teal-600" />
+            Require human approval before any change
+          </label>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={f.active} onChange={e=>set('active',e.target.checked)} className="accent-teal-600" />
+            Active
+          </label>
+        </div>
+        {autoMode && <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-800 p-2.5 text-xs text-amber-800 dark:text-amber-200">⚠️ Automatic mode: this rule will change Meta without asking. A maximum incremental spend is required as the kill switch.</div>}
+
+        <div className="flex items-center gap-2 pt-1">
+          <button disabled={busy} onClick={save} className="text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700 rounded-lg px-5 py-2 disabled:opacity-40">{editing?'Save changes':'Create rule'}</button>
+          <div className="flex-1" />
+          <button onClick={onClose} className="text-sm text-gray-500">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Apply-to-Meta confirmation (Phase 3) ─────────────────────────────────────
+// Loads a read-only preview of the CURRENT Meta state + the exact planned change,
+// surfaces conflicts / missing token, and only writes when the admin confirms.
+function ApplyApprovalModal({ approval, onClose, onDone }) {
+  const { dispatch } = useApp();
+  const [loading, setLoading] = React.useState(true);
+  const [prev, setPrev] = React.useState(null);
+  const [err, setErr] = React.useState('');
+  const [applying, setApplying] = React.useState(false);
+
+  React.useEffect(() => { (async () => {
+    setLoading(true); setErr('');
+    try {
+      const { data, error } = await sb.functions.invoke('weather-execute', { body:{ action:'preview', approvalId:approval.id } });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Preview failed');
+      setPrev(data);
+    } catch (e) { setErr(e.message || String(e)); }
+    setLoading(false);
+  })(); }, [approval.id]);
+
+  const apply = async () => {
+    setApplying(true);
+    try {
+      const { data, error } = await sb.functions.invoke('weather-execute', { body:{ action:'apply', approvalId:approval.id } });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Apply failed');
+      showToast(dispatch, 'Applied to Meta'+(data.clamped?' (budget clamped to cap)':''));
+      onDone && onDone(); onClose();
+    } catch (e) { showToast(dispatch, 'Apply failed: '+(e.message||e), 'error'); setErr(e.message||String(e)); }
+    setApplying(false);
+  };
+
+  const budget = c => c==null ? '—' : '$'+(Number(c)/100).toFixed(2);
+  const conflict = prev?.conflict;
+  const blocked = !!conflict || prev?.missingEnv;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 w-full max-w-md p-5 space-y-3" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">Apply to Meta</h3>
+          <button onClick={onClose} className="text-gray-400 text-xl leading-none">×</button>
+        </div>
+        <p className="text-xs text-gray-500">{approval.headline}</p>
+        {loading && <p className="text-sm text-gray-500">Reading current Meta state…</p>}
+        {err && <p className="text-sm text-red-600">{err}</p>}
+        {prev && !loading && (
+          <>
+            {prev.missingEnv && <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-800 p-2.5 text-xs text-red-700 dark:text-red-300">⚠️ META_ACCESS_TOKEN isn’t configured on the server, so Meta can’t be changed. Add it in Supabase → Edge Functions → Secrets, then retry.</div>}
+            {conflict && <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-800 p-2.5 text-xs text-amber-800 dark:text-amber-200">⚠️ This ad object is already controlled by another weather rule. Roll that rule back first — only one rule may control an object at a time.</div>}
+            {prev.liveError && !prev.missingEnv && <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-800 p-2.5 text-xs text-amber-800 dark:text-amber-200">Couldn’t read the live Meta object: {prev.liveError}</div>}
+            <div className="rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700 text-sm">
+              <div className="flex justify-between px-3 py-2"><span className="text-gray-500">Target</span><span className="font-medium">{prev.targetType} {prev.target}</span></div>
+              <div className="flex justify-between px-3 py-2"><span className="text-gray-500">Status now → after</span><span className="font-medium">{prev.before?.status||'?'} → <b className="text-emerald-600">{prev.plan?.status||prev.before?.status||'—'}</b></span></div>
+              <div className="flex justify-between px-3 py-2"><span className="text-gray-500">Budget now → after</span><span className="font-medium">{budget(prev.before?.daily_budget)} → <b className="text-emerald-600">{prev.plan?.daily_budget!=null?budget(prev.plan.daily_budget):budget(prev.before?.daily_budget)}</b>{prev.plan?.clamped?' (capped)':''}</span></div>
+              {prev.ceiling!=null && <div className="flex justify-between px-3 py-2"><span className="text-gray-500">Spend ceiling</span><span className="font-medium">{budget(prev.spentSoFar)} / {budget(prev.ceiling)}</span></div>}
+            </div>
+            {prev.plan?.note && <p className="text-[11px] text-gray-400">{prev.plan.note}</p>}
+            <p className="text-[11px] text-gray-400">The current state above is saved so a rollback restores it exactly.</p>
+          </>
+        )}
+        <div className="flex items-center gap-2 pt-1">
+          <button disabled={applying||loading||blocked} onClick={apply} className="text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg px-5 py-2 disabled:opacity-40">{applying?'Applying…':'Apply to Meta'}</button>
+          <div className="flex-1" />
+          <button onClick={onClose} className="text-sm text-gray-500">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main view ────────────────────────────────────────────────────────────────
+function WeatherAdsView() {
+  const { state, dispatch } = useApp();
+  const [rules, setRules] = React.useState([]);
+  const [control, setControl] = React.useState([]);
+  const [approvals, setApprovals] = React.useState([]);
+  const [lastRun, setLastRun] = React.useState({});   // ruleId -> latest run row
+  const [periods, setPeriods] = React.useState([]);   // automation_periods (Phase 5 reporting)
+  const [loading, setLoading] = React.useState(true);
+  const [checking, setChecking] = React.useState(null); // 'all' | ruleId | null
+  const [syncing, setSyncing] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const [editRule, setEditRule] = React.useState(null);   // null | {} (new) | rule
+  const [checkRule, setCheckRule] = React.useState(null);
+  const [applyAppr, setApplyAppr] = React.useState(null); // approval pending apply-to-Meta
+  const [rollingBack, setRollingBack] = React.useState(null); // ruleId being rolled back
+
+  const load = async () => {
+    setLoading(true); setErr('');
+    try {
+      const { data:r, error } = await sb.from('automation_rules').select('*').eq('trigger_type','weather').order('created_at',{ascending:false});
+      if (error) throw error;
+      setRules((r||[]).map(mapWxRule));
+      const { data:ctrl } = await sb.from('automation_control').select('*');
+      setControl(ctrl||[]);
+      const { data:appr } = await sb.from('automation_approvals').select('*').eq('status','pending').order('created_at',{ascending:false});
+      setApprovals(appr||[]);
+      // latest run per rule (recent window; first row per rule wins since ordered desc)
+      const { data:runs } = await sb.from('automation_runs').select('rule_id,checked_at,condition_met,decision,note').order('checked_at',{ascending:false}).limit(300);
+      const byRule = {}; (runs||[]).forEach(x => { if (!byRule[x.rule_id]) byRule[x.rule_id] = x; });
+      setLastRun(byRule);
+      const { data:per } = await sb.from('automation_periods').select('*').eq('trigger_type','weather').order('started_at',{ascending:false}).limit(200);
+      setPeriods(per||[]);
+    } catch (e) { setErr(e.message || String(e)); }
+    setLoading(false);
+  };
+
+  // Phase 5 — pull Meta insights for every triggered period (spend/results + baseline).
+  const syncReport = async () => {
+    setSyncing(true);
+    try {
+      const { data, error } = await sb.functions.invoke('weather-report', { body:{} });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Sync failed');
+      const failed = (data.results||[]).filter(r=>!r.ok).length;
+      showToast(dispatch, failed ? `Synced ${data.synced} · ${failed} had no Meta data` : `Synced ${data.synced} period${data.synced===1?'':'s'}`);
+      await load();
+    } catch (e) { showToast(dispatch, 'Sync failed: '+(e.message||e), 'error'); }
+    setSyncing(false);
+  };
+  React.useEffect(() => { load(); }, []);
+
+  // Phase 2 — run the server-side engine (evaluate + log + recommend). No Meta.
+  const runChecks = async (ruleId) => {
+    setChecking(ruleId || 'all');
+    try {
+      const { data, error } = await sb.functions.invoke('weather-rules-check', { body: ruleId ? { ruleId } : {} });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Check failed');
+      const res = data.results || [];
+      const met = res.filter(x=>x.met).length;
+      const recs = res.filter(x=>x.decision==='recommend').length;
+      const applied = res.filter(x=>x.decision==='auto_executed').length;
+      const rolled = res.filter(x=>['rolled_back','ceiling_rolled_back'].includes(x.decision)).length;
+      const errs = res.filter(x=>['error','auto_failed','rollback_failed'].includes(x.decision));
+      const noSecret = res.some(x=>String(x.decision||'').includes('no_cron_secret'));
+      if (errs.length) showToast(dispatch, `${errs.length} rule(s) had a problem: ${errs[0].execError||errs[0].error||errs[0].decision}`, 'error');
+      else if (noSecret) showToast(dispatch, 'Auto actions need CRON_SECRET set in Supabase → Edge Functions → Secrets', 'error');
+      else if (!res.length) showToast(dispatch, ruleId ? 'Rule checked' : 'No active rules to check');
+      else { const bits=[`${res.length} checked`, `${met} met`]; if(recs)bits.push(`${recs} new rec`); if(applied)bits.push(`${applied} auto-applied`); if(rolled)bits.push(`${rolled} rolled back`); showToast(dispatch, bits.join(' · ')); }
+      await load();
+    } catch (e) { showToast(dispatch, 'Check failed: '+(e.message||e), 'error'); }
+    setChecking(null);
+  };
+
+  const ignoreApproval = async (a) => {
+    try {
+      const { error } = await sb.from('automation_approvals').update({ status:'ignored', decided_by:state.user.id, decided_at:new Date().toISOString() }).eq('id', a.id);
+      if (error) throw error;
+      await sb.from('automation_events').insert({ rule_id:a.rule_id, event_type:'ignored', detail:a.headline, actor:state.user.id });
+      showToast(dispatch, 'Recommendation dismissed');
+      await load();
+    } catch (e) { showToast(dispatch, 'Failed: '+(e.message||e), 'error'); }
+  };
+
+  const rollback = async (r) => {
+    if (!window.confirm(`Roll back "${r.name}"? This will ${r.stopAction==='pause'?'pause':r.stopAction==='restore'?'restore the previous status & budget on':'reset the budget on'} ${r.targetType} ${r.targetName||r.targetId} in Meta and release the lock.`)) return;
+    setRollingBack(r.id);
+    try {
+      const { data, error } = await sb.functions.invoke('weather-execute', { body:{ action:'stop', ruleId:r.id } });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Rollback failed');
+      showToast(dispatch, data.note || 'Rolled back in Meta');
+      await load();
+    } catch (e) { showToast(dispatch, 'Rollback failed: '+(e.message||e), 'error'); }
+    setRollingBack(null);
+  };
+
+  const ctrlFor = id => control.find(c => c.target_id === id);
+  const activeCount = rules.filter(r=>r.active).length;
+  const controlledCount = control.filter(c=>c.controlling_rule_id).length;
+  const ruleName = id => (rules.find(r=>r.id===id)||{}).name || '—';
+  const weatherSpendCents = periods.reduce((s,p)=>s+(p.spend_cents||0),0);
+  const anySynced = periods.some(p=>p.metrics_synced_at);
+  const pctLift = (now, base) => (base==null||base===0) ? null : Math.round(((now-base)/base)*100);
+  const lastCheckedAt = Object.values(lastRun).map(x=>x.checked_at).sort().slice(-1)[0];
+  const fmtWhen = ts => { if(!ts) return null; const d=new Date(ts), m=Math.round((Date.now()-d)/60000); if(m<1) return 'just now'; if(m<60) return m+'m ago'; if(m<1440) return Math.round(m/60)+'h ago'; return d.toLocaleDateString(); };
+  const DEC_LABEL = { recommend:'✅ Recommended', recommend_pending:'✅ Met (already pending)', holding:'🎛 Active (holding)', auto_executed:'⚡ Auto-applied', auto_failed:'⚠ Auto-apply failed', rolled_back:'⏹ Rolled back (cleared)', ceiling_rolled_back:'⏹ Rolled back (ceiling)', rollback_failed:'⚠ Rollback failed', auto_blocked_no_cron_secret:'⚠ Needs CRON_SECRET', rollback_blocked_no_cron_secret:'⚠ Needs CRON_SECRET', no_change:'○ No change', error:'⚠ Error' };
+
+  const Stat = ({ v, l }) => (
+    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 p-3">
+      <p className="text-xl font-black text-teal-700 dark:text-teal-400">{v}</p>
+      <p className="text-[10px] uppercase tracking-wide text-gray-400 mt-0.5">{l}</p>
+    </div>
+  );
+
+  return (
+    <div className="p-4 sm:p-6 pb-24 lg:pb-6 max-w-5xl mx-auto space-y-5">
+      <div className="rounded-3xl bg-gradient-to-br from-[#2E8A97] to-[#3c9ca8] p-5 text-white shadow-sm flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-xl font-black tracking-tight">🌦 Weather Triggered Ads</h1>
+          <p className="text-xs text-teal-100/80 mt-0.5">Run, pause or re-budget Meta ads automatically on Canadian weather. Canada-only.</p>
+          {lastCheckedAt && <p className="text-[11px] text-teal-100/70 mt-1">Last check: {fmtWhen(lastCheckedAt)}</p>}
+        </div>
+        <div className="flex items-center gap-2">
+          <button disabled={checking!=null || activeCount===0} onClick={()=>runChecks(null)} title={activeCount===0?'No active rules':'Evaluate all active rules against live weather'} className="text-sm font-semibold bg-white/15 hover:bg-white/25 text-white rounded-lg px-4 py-2 whitespace-nowrap disabled:opacity-40">{checking==='all'?'Checking…':'⟳ Check all now'}</button>
+          <button onClick={()=>setEditRule({})} className="text-sm font-semibold bg-white text-[#2E8A97] hover:bg-teal-50 rounded-lg px-4 py-2 whitespace-nowrap">+ New rule</button>
+        </div>
+      </div>
+
+      {/* Dashboard shell */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat v={activeCount} l="Active rules" />
+        <Stat v={approvals.length} l="Pending approvals" />
+        <Stat v={controlledCount} l="Ads weather-controlled" />
+        <Stat v={periods.length ? `$${wxDollars(weatherSpendCents)}` : '—'} l="Weather spend (triggered)" />
+      </div>
+
+      {approvals.length>0 && (
+        <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
+          <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">Pending weather recommendations</p>
+          {approvals.map(a=>(
+            <div key={a.id} className="rounded-lg bg-white/70 dark:bg-gray-900/40 border border-amber-200 dark:border-amber-800 p-2.5">
+              <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">{a.headline}</p>
+              {a.body && <p className="text-[11px] text-amber-800/80 dark:text-amber-200/80 mt-0.5">{a.body}</p>}
+              <div className="flex items-center gap-2 mt-2">
+                <button onClick={()=>setApplyAppr(a)} title="Review the exact Meta change, then apply" className="text-[11px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md px-2.5 py-1">Approve & apply…</button>
+                <button onClick={()=>ignoreApproval(a)} className="text-[11px] font-semibold text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md px-2.5 py-1">Ignore</button>
+              </div>
+            </div>
+          ))}
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">Approving shows the exact before → after and applies it to Meta with the budget cap, before-state capture, conflict lock and spend ceiling enforced.</p>
+        </div>
+      )}
+
+      {loading && <p className="text-sm text-gray-500">Loading rules…</p>}
+      {err && <p className="text-sm text-red-600">{err}</p>}
+
+      {!loading && !err && rules.length===0 && (
+        <div className="rounded-xl border border-dashed border-gray-300 dark:border-gray-600 p-8 text-center">
+          <p className="text-gray-500 text-sm">No weather rules yet.</p>
+          <button onClick={()=>setEditRule({})} className="mt-3 text-sm font-semibold text-teal-600">Create your first rule →</button>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {rules.map(r=>{
+          const c = ctrlFor(r.targetId);
+          return (
+            <div key={r.id} className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold">{r.name}</p>
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${r.active?'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300':'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'}`}>{r.active?'Active':'Inactive'}</span>
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${r.approvalRequired?'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300':'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>{r.approvalRequired?'Approval':'Auto'}</span>
+                  {c?.controlling_rule_id && <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300" title="This ad is currently weather-controlled">🎛 In control</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  {c?.controlling_rule_id===r.id && <button disabled={rollingBack===r.id} onClick={()=>rollback(r)} title="Roll back this rule's Meta change and release the lock" className="text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg px-2.5 py-1 disabled:opacity-40">{rollingBack===r.id?'Rolling back…':'⏹ Roll back'}</button>}
+                  <button disabled={checking!=null} onClick={()=>runChecks(r.id)} title="Evaluate this rule against live weather and log the result" className="text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 rounded-lg px-2.5 py-1 disabled:opacity-40">{checking===r.id?'Running…':'▶ Run now'}</button>
+                  <button onClick={()=>setCheckRule(r)} className="text-xs font-semibold text-teal-600 border border-teal-200 dark:border-teal-800 rounded-lg px-2.5 py-1">🌤 Preview</button>
+                  <button onClick={()=>setEditRule(r)} className="text-xs font-semibold border border-gray-200 dark:border-gray-700 rounded-lg px-2.5 py-1">Edit</button>
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1">
+                📍 {r.city}{r.province?`, ${r.province}`:''} · {wxRuleSummary(r)} · → {r.targetType} {r.targetName||r.targetId}
+                {r.dailyBudgetCents!=null?` · $${wxDollars(r.dailyBudgetCents)}/day`:''}
+                {r.maxIncrementalSpendCents!=null?` · cap $${wxDollars(r.maxIncrementalSpendCents)}`:''}
+              </p>
+              {lastRun[r.id] && (
+                <p className="text-[11px] mt-1.5 flex items-center gap-1.5">
+                  <span className={`font-semibold ${lastRun[r.id].decision==='error'?'text-red-600':lastRun[r.id].condition_met?'text-emerald-600 dark:text-emerald-400':'text-gray-400'}`}>{DEC_LABEL[lastRun[r.id].decision]||lastRun[r.id].decision}</span>
+                  <span className="text-gray-400">· {fmtWhen(lastRun[r.id].checked_at)}</span>
+                  {lastRun[r.id].note && <span className="text-gray-400 truncate">· {lastRun[r.id].note}</span>}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Phase 5 — trigger performance */}
+      <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <div>
+            <p className="font-semibold">📊 Trigger performance</p>
+            <p className="text-[11px] text-gray-500">What each weather-triggered window actually delivered on Meta, vs the same ad in the equal window just before it.</p>
+          </div>
+          <button disabled={syncing || periods.length===0} onClick={syncReport} title={periods.length===0?'No triggered periods yet':'Pull Meta insights for every triggered window'} className="text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 rounded-lg px-3 py-1.5 disabled:opacity-40">{syncing?'Syncing…':'⟳ Sync Meta insights'}</button>
+        </div>
+        {periods.length===0
+          ? <p className="text-xs text-gray-500 py-3 text-center">No triggered windows yet. When a rule activates an ad, it appears here — then Sync to pull spend & results.</p>
+          : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="text-gray-400 text-left border-b border-gray-100 dark:border-gray-700">
+                <th className="px-2 py-1">Rule</th><th className="px-2 py-1">Window</th><th className="px-2 py-1 text-right">Spend</th><th className="px-2 py-1 text-right">Impr.</th><th className="px-2 py-1 text-right">Clicks</th><th className="px-2 py-1 text-right">Results</th><th className="px-2 py-1 text-right">vs&nbsp;prior</th>
+              </tr></thead>
+              <tbody>
+                {periods.map(p=>{
+                  const lift = pctLift(p.results, p.baseline_results);
+                  const spendLift = pctLift(p.spend_cents, p.baseline_spend_cents);
+                  return (
+                    <tr key={p.id} className="border-b border-gray-50 dark:border-gray-800">
+                      <td className="px-2 py-1.5 font-medium">{ruleName(p.rule_id)}</td>
+                      <td className="px-2 py-1.5 text-gray-500">{(p.started_at||'').slice(5,10)} → {p.ended_at?p.ended_at.slice(5,10):<span className="text-emerald-600 font-semibold">active</span>}</td>
+                      <td className="px-2 py-1.5 text-right">{p.spend_cents!=null?`$${wxDollars(p.spend_cents)}`:'—'}</td>
+                      <td className="px-2 py-1.5 text-right">{p.impressions!=null?p.impressions.toLocaleString():'—'}</td>
+                      <td className="px-2 py-1.5 text-right">{p.clicks!=null?p.clicks.toLocaleString():'—'}</td>
+                      <td className="px-2 py-1.5 text-right font-semibold">{p.results!=null?p.results:'—'}</td>
+                      <td className="px-2 py-1.5 text-right">{lift==null?<span className="text-gray-300">—</span>:<span className={lift>=0?'text-emerald-600 font-semibold':'text-rose-600 font-semibold'}>{lift>=0?'+':''}{lift}%</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!anySynced && <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2">Metrics not pulled yet — hit “Sync Meta insights”. (Meta reports with a short delay, so very recent windows may read low.)</p>}
+          </div>
+        )}
+      </div>
+
+      <p className="text-[11px] text-gray-400">Phase 5 — weather-triggered windows are measured against baseline on Meta (spend, clicks, results, lift), and the live period’s real spend feeds the hard ceiling. Weather Ads is complete: rules → live checks → approval/auto → Meta with safeguards → scheduled every 2h → reporting.</p>
+
+      {editRule && <WeatherRuleModal rule={editRule.id?editRule:null} onClose={()=>setEditRule(null)} onSaved={load} />}
+      {checkRule && <WeatherCheckModal rule={checkRule} onClose={()=>setCheckRule(null)} />}
+      {applyAppr && <ApplyApprovalModal approval={applyAppr} onClose={()=>setApplyAppr(null)} onDone={load} />}
+    </div>
+  );
+}
+
 // ─── EMAIL (MAILCHIMP) ANALYTICS VIEW ─────────────────────────────────────────
 // Admin-only. Campaign performance + audience health from Mailchimp, via the
 // mailchimp-analytics edge function.
@@ -18289,7 +19123,7 @@ function AppRouter() {
   const { view, params, user } = state;
 
   // Guard views by role — redirect instead of showing error
-  const adminOnly = ['products','stores','sales-import','targets','users','regions','retail-pricing','cluster-ads','media-desk','ad-creatives','licenses-admin','dashboard-email','manage-promo','manage-promo-categories','promo-orders-admin','promo-reporting','trade-leads','social','email-analytics'];
+  const adminOnly = ['products','stores','sales-import','targets','users','regions','retail-pricing','cluster-ads','media-desk','weather-ads','ad-creatives','licenses-admin','dashboard-email','manage-promo','manage-promo-categories','promo-orders-admin','promo-reporting','trade-leads','social','email-analytics'];
   if (adminOnly.includes(view) && user.role !== 'admin') {
     dispatch({ type:'NAV', view:'dashboard' });
     return null;
@@ -18327,6 +19161,7 @@ function AppRouter() {
     case 'ad-performance':    return <AdPerformanceView />;
     case 'social':            return <SocialView />;
     case 'media-desk':        return <MediaDeskView />;
+    case 'weather-ads':       return <WeatherAdsView />;
     case 'email-analytics':   return <EmailAnalyticsView />;
     case 'trade-leads':       return <TradeLeadsView />;
     case 'web-analytics':     return <WebAnalyticsView />;
@@ -19024,7 +19859,7 @@ function NewOrder() {
     return '';
   }
 
-  const [form, setForm] = useState({accountId:prefillAcc,productId:'',bottles:'',requestedDate:today(),storeId:'',notes:'',licenseNumber:'',liquorLicenseName:'',orderedBy:'',billingEmail:'',pstNumber:'',province:''});
+  const [form, setForm] = useState({accountId:prefillAcc,productId:'',bottles:'',requestedDate:today(),storeId:'',notes:'',storeNote:'',licenseNumber:'',liquorLicenseName:'',orderedBy:'',billingEmail:'',pstNumber:'',province:''});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const [invoiceOrder, setInvoiceOrder] = useState(null);
   const tax = state.taxSettings || { enabled:true, pstRate:10, gstRate:7 };
@@ -19132,6 +19967,7 @@ function NewOrder() {
           bill_to_address:    [acc?.address, acc?.city, acc?.region].filter(Boolean).join(', '),
           bill_to_license:    form.licenseNumber || acc?.licenseNumber || '',
           bill_to_pst:        order.pstNumber || '',
+          store_note:         form.storeNote || '',
           store_name:         store?.name || '',
           store_address:      store?.address || '',
           store_license:      store?.licenseNumber || '',
@@ -19225,6 +20061,7 @@ function NewOrder() {
         )}
         <FInput label="Billing Email" value={form.billingEmail} onChange={v=>set('billingEmail',v)} placeholder="billing@store.com" type="email"/>
         <FInput label="Notes" value={form.notes} onChange={v=>set('notes',v)} rows={2}/>
+        <FInput label="Note to store (in the order email — not on the invoice)" value={form.storeNote} onChange={v=>set('storeNote',v)} rows={2} placeholder="e.g. Hold for pickup Friday · call before delivery"/>
         {form.bottles && <div className="p-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 text-xs text-teal-800 dark:text-teal-400">{form.bottles} bottles = {(parseInt(form.bottles)/12).toFixed(1)} cases</div>}
         {/* Invoice / Order Summary */}
         {hasTax && (
