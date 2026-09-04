@@ -277,6 +277,76 @@ function WeatherRuleModal({ rule, onClose, onSaved }) {
   );
 }
 
+// ── Apply-to-Meta confirmation (Phase 3) ─────────────────────────────────────
+// Loads a read-only preview of the CURRENT Meta state + the exact planned change,
+// surfaces conflicts / missing token, and only writes when the admin confirms.
+function ApplyApprovalModal({ approval, onClose, onDone }) {
+  const { dispatch } = useApp();
+  const [loading, setLoading] = React.useState(true);
+  const [prev, setPrev] = React.useState(null);
+  const [err, setErr] = React.useState('');
+  const [applying, setApplying] = React.useState(false);
+
+  React.useEffect(() => { (async () => {
+    setLoading(true); setErr('');
+    try {
+      const { data, error } = await sb.functions.invoke('weather-execute', { body:{ action:'preview', approvalId:approval.id } });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Preview failed');
+      setPrev(data);
+    } catch (e) { setErr(e.message || String(e)); }
+    setLoading(false);
+  })(); }, [approval.id]);
+
+  const apply = async () => {
+    setApplying(true);
+    try {
+      const { data, error } = await sb.functions.invoke('weather-execute', { body:{ action:'apply', approvalId:approval.id } });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Apply failed');
+      showToast(dispatch, 'Applied to Meta'+(data.clamped?' (budget clamped to cap)':''));
+      onDone && onDone(); onClose();
+    } catch (e) { showToast(dispatch, 'Apply failed: '+(e.message||e), 'error'); setErr(e.message||String(e)); }
+    setApplying(false);
+  };
+
+  const budget = c => c==null ? '—' : '$'+(Number(c)/100).toFixed(2);
+  const conflict = prev?.conflict;
+  const blocked = !!conflict || prev?.missingEnv;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 w-full max-w-md p-5 space-y-3" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">Apply to Meta</h3>
+          <button onClick={onClose} className="text-gray-400 text-xl leading-none">×</button>
+        </div>
+        <p className="text-xs text-gray-500">{approval.headline}</p>
+        {loading && <p className="text-sm text-gray-500">Reading current Meta state…</p>}
+        {err && <p className="text-sm text-red-600">{err}</p>}
+        {prev && !loading && (
+          <>
+            {prev.missingEnv && <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-800 p-2.5 text-xs text-red-700 dark:text-red-300">⚠️ META_ACCESS_TOKEN isn’t configured on the server, so Meta can’t be changed. Add it in Supabase → Edge Functions → Secrets, then retry.</div>}
+            {conflict && <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-800 p-2.5 text-xs text-amber-800 dark:text-amber-200">⚠️ This ad object is already controlled by another weather rule. Roll that rule back first — only one rule may control an object at a time.</div>}
+            {prev.liveError && !prev.missingEnv && <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-800 p-2.5 text-xs text-amber-800 dark:text-amber-200">Couldn’t read the live Meta object: {prev.liveError}</div>}
+            <div className="rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700 text-sm">
+              <div className="flex justify-between px-3 py-2"><span className="text-gray-500">Target</span><span className="font-medium">{prev.targetType} {prev.target}</span></div>
+              <div className="flex justify-between px-3 py-2"><span className="text-gray-500">Status now → after</span><span className="font-medium">{prev.before?.status||'?'} → <b className="text-emerald-600">{prev.plan?.status||prev.before?.status||'—'}</b></span></div>
+              <div className="flex justify-between px-3 py-2"><span className="text-gray-500">Budget now → after</span><span className="font-medium">{budget(prev.before?.daily_budget)} → <b className="text-emerald-600">{prev.plan?.daily_budget!=null?budget(prev.plan.daily_budget):budget(prev.before?.daily_budget)}</b>{prev.plan?.clamped?' (capped)':''}</span></div>
+              {prev.ceiling!=null && <div className="flex justify-between px-3 py-2"><span className="text-gray-500">Spend ceiling</span><span className="font-medium">{budget(prev.spentSoFar)} / {budget(prev.ceiling)}</span></div>}
+            </div>
+            {prev.plan?.note && <p className="text-[11px] text-gray-400">{prev.plan.note}</p>}
+            <p className="text-[11px] text-gray-400">The current state above is saved so a rollback restores it exactly.</p>
+          </>
+        )}
+        <div className="flex items-center gap-2 pt-1">
+          <button disabled={applying||loading||blocked} onClick={apply} className="text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg px-5 py-2 disabled:opacity-40">{applying?'Applying…':'Apply to Meta'}</button>
+          <div className="flex-1" />
+          <button onClick={onClose} className="text-sm text-gray-500">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main view ────────────────────────────────────────────────────────────────
 function WeatherAdsView() {
   const { state, dispatch } = useApp();
@@ -289,6 +359,8 @@ function WeatherAdsView() {
   const [err, setErr] = React.useState('');
   const [editRule, setEditRule] = React.useState(null);   // null | {} (new) | rule
   const [checkRule, setCheckRule] = React.useState(null);
+  const [applyAppr, setApplyAppr] = React.useState(null); // approval pending apply-to-Meta
+  const [rollingBack, setRollingBack] = React.useState(null); // ruleId being rolled back
 
   const load = async () => {
     setLoading(true); setErr('');
@@ -318,10 +390,14 @@ function WeatherAdsView() {
       const res = data.results || [];
       const met = res.filter(x=>x.met).length;
       const recs = res.filter(x=>x.decision==='recommend').length;
-      const errs = res.filter(x=>x.decision==='error');
-      if (errs.length) showToast(dispatch, `${errs.length} rule(s) errored: ${errs[0].error}`, 'error');
+      const applied = res.filter(x=>x.decision==='auto_executed').length;
+      const rolled = res.filter(x=>['rolled_back','ceiling_rolled_back'].includes(x.decision)).length;
+      const errs = res.filter(x=>['error','auto_failed','rollback_failed'].includes(x.decision));
+      const noSecret = res.some(x=>String(x.decision||'').includes('no_cron_secret'));
+      if (errs.length) showToast(dispatch, `${errs.length} rule(s) had a problem: ${errs[0].execError||errs[0].error||errs[0].decision}`, 'error');
+      else if (noSecret) showToast(dispatch, 'Auto actions need CRON_SECRET set in Supabase → Edge Functions → Secrets', 'error');
       else if (!res.length) showToast(dispatch, ruleId ? 'Rule checked' : 'No active rules to check');
-      else showToast(dispatch, `Checked ${res.length} · ${met} met · ${recs} new recommendation${recs===1?'':'s'}`);
+      else { const bits=[`${res.length} checked`, `${met} met`]; if(recs)bits.push(`${recs} new rec`); if(applied)bits.push(`${applied} auto-applied`); if(rolled)bits.push(`${rolled} rolled back`); showToast(dispatch, bits.join(' · ')); }
       await load();
     } catch (e) { showToast(dispatch, 'Check failed: '+(e.message||e), 'error'); }
     setChecking(null);
@@ -337,12 +413,24 @@ function WeatherAdsView() {
     } catch (e) { showToast(dispatch, 'Failed: '+(e.message||e), 'error'); }
   };
 
+  const rollback = async (r) => {
+    if (!window.confirm(`Roll back "${r.name}"? This will ${r.stopAction==='pause'?'pause':r.stopAction==='restore'?'restore the previous status & budget on':'reset the budget on'} ${r.targetType} ${r.targetName||r.targetId} in Meta and release the lock.`)) return;
+    setRollingBack(r.id);
+    try {
+      const { data, error } = await sb.functions.invoke('weather-execute', { body:{ action:'stop', ruleId:r.id } });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Rollback failed');
+      showToast(dispatch, data.note || 'Rolled back in Meta');
+      await load();
+    } catch (e) { showToast(dispatch, 'Rollback failed: '+(e.message||e), 'error'); }
+    setRollingBack(null);
+  };
+
   const ctrlFor = id => control.find(c => c.target_id === id);
   const activeCount = rules.filter(r=>r.active).length;
   const controlledCount = control.filter(c=>c.controlling_rule_id).length;
   const lastCheckedAt = Object.values(lastRun).map(x=>x.checked_at).sort().slice(-1)[0];
   const fmtWhen = ts => { if(!ts) return null; const d=new Date(ts), m=Math.round((Date.now()-d)/60000); if(m<1) return 'just now'; if(m<60) return m+'m ago'; if(m<1440) return Math.round(m/60)+'h ago'; return d.toLocaleDateString(); };
-  const DEC_LABEL = { recommend:'✅ Recommended', recommend_pending:'✅ Met (already pending)', auto_execute_pending:'✅ Met (auto)', no_change:'○ No change', error:'⚠ Error' };
+  const DEC_LABEL = { recommend:'✅ Recommended', recommend_pending:'✅ Met (already pending)', holding:'🎛 Active (holding)', auto_executed:'⚡ Auto-applied', auto_failed:'⚠ Auto-apply failed', rolled_back:'⏹ Rolled back (cleared)', ceiling_rolled_back:'⏹ Rolled back (ceiling)', rollback_failed:'⚠ Rollback failed', auto_blocked_no_cron_secret:'⚠ Needs CRON_SECRET', rollback_blocked_no_cron_secret:'⚠ Needs CRON_SECRET', no_change:'○ No change', error:'⚠ Error' };
 
   const Stat = ({ v, l }) => (
     <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 p-3">
@@ -381,12 +469,12 @@ function WeatherAdsView() {
               <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">{a.headline}</p>
               {a.body && <p className="text-[11px] text-amber-800/80 dark:text-amber-200/80 mt-0.5">{a.body}</p>}
               <div className="flex items-center gap-2 mt-2">
-                <button disabled title="Applying to Meta arrives in Phase 3" className="text-[11px] font-semibold text-white bg-emerald-600/50 rounded-md px-2.5 py-1 cursor-not-allowed">Approve & apply (Phase 3)</button>
+                <button onClick={()=>setApplyAppr(a)} title="Review the exact Meta change, then apply" className="text-[11px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md px-2.5 py-1">Approve & apply…</button>
                 <button onClick={()=>ignoreApproval(a)} className="text-[11px] font-semibold text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md px-2.5 py-1">Ignore</button>
               </div>
             </div>
           ))}
-          <p className="text-[11px] text-amber-600 dark:text-amber-400">Recommendations are logged now. Approving to actually change Meta (with rollback + spend-ceiling safeguards) is Phase 3.</p>
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">Approving shows the exact before → after and applies it to Meta with the budget cap, before-state capture, conflict lock and spend ceiling enforced.</p>
         </div>
       )}
 
@@ -413,6 +501,7 @@ function WeatherAdsView() {
                   {c?.controlling_rule_id && <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300" title="This ad is currently weather-controlled">🎛 In control</span>}
                 </div>
                 <div className="flex items-center gap-2">
+                  {c?.controlling_rule_id===r.id && <button disabled={rollingBack===r.id} onClick={()=>rollback(r)} title="Roll back this rule's Meta change and release the lock" className="text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg px-2.5 py-1 disabled:opacity-40">{rollingBack===r.id?'Rolling back…':'⏹ Roll back'}</button>}
                   <button disabled={checking!=null} onClick={()=>runChecks(r.id)} title="Evaluate this rule against live weather and log the result" className="text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 rounded-lg px-2.5 py-1 disabled:opacity-40">{checking===r.id?'Running…':'▶ Run now'}</button>
                   <button onClick={()=>setCheckRule(r)} className="text-xs font-semibold text-teal-600 border border-teal-200 dark:border-teal-800 rounded-lg px-2.5 py-1">🌤 Preview</button>
                   <button onClick={()=>setEditRule(r)} className="text-xs font-semibold border border-gray-200 dark:border-gray-700 rounded-lg px-2.5 py-1">Edit</button>
@@ -435,10 +524,11 @@ function WeatherAdsView() {
         })}
       </div>
 
-      <p className="text-[11px] text-gray-400">Phase 2 — rules run through the engine on demand: every check is logged and triggered rules generate a recommendation. Applying to Meta (Phase 3), automatic scheduling (Phase 4) and reporting (Phase 5) are next. No Meta changes are made yet.</p>
+      <p className="text-[11px] text-gray-400">Phase 4 — a scheduler runs every 2h: it auto-applies auto-mode rules, auto-rolls-back rules whose weather has cleared, and enforces the spend ceiling — all with the same safeguards. Approval rules still only recommend. Reporting (Phase 5) is next.</p>
 
       {editRule && <WeatherRuleModal rule={editRule.id?editRule:null} onClose={()=>setEditRule(null)} onSaved={load} />}
       {checkRule && <WeatherCheckModal rule={checkRule} onClose={()=>setCheckRule(null)} />}
+      {applyAppr && <ApplyApprovalModal approval={applyAppr} onClose={()=>setApplyAppr(null)} onDone={load} />}
     </div>
   );
 }
