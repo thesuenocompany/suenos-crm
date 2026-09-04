@@ -177,23 +177,25 @@ function AdWeatherRuleTag({ rules, control }) {
     }
   })(); return ()=>{ dead=true; }; }, [key]);
 
-  // Live on/off status of the controlled Meta object — polled every 45s so the
-  // card reflects the true state even when a weather rule flips it while you watch.
+  // Live on/off status of the controlled Meta object — ONE batched call for all
+  // targets, on mount then every 3 min, only while the tab is visible, backing
+  // off on a Meta rate-limit. (Keeps calls tiny to respect ads-management limits.)
   React.useEffect(() => {
     const token = (typeof localStorage!=='undefined' && localStorage.getItem('meta_access_token')) || '';
     if (!token) return;
-    let dead=false;
+    let dead=false, backoffUntil=0;
+    const ids = [...new Set((rules||[]).map(r=>r.targetId).filter(Boolean))];
+    if (!ids.length) return;
     const pull = async () => {
-      const ids = [...new Set((rules||[]).map(r=>r.targetId).filter(Boolean))];
-      for (const id of ids) {
-        try {
-          const j = await fetch(`https://graph.facebook.com/v25.0/${id}?fields=effective_status,status&access_token=${encodeURIComponent(token)}`).then(r=>r.json());
-          if (!dead && !j.error) setMetaStatus(s=>({ ...s, [id]: j.effective_status || j.status || '?' }));
-        } catch(_) {}
-      }
+      if (dead || (typeof document!=='undefined' && document.visibilityState !== 'visible') || Date.now() < backoffUntil) return;
+      try {
+        const j = await fetch(`https://graph.facebook.com/v25.0/?ids=${encodeURIComponent(ids.join(','))}&fields=effective_status,status&access_token=${encodeURIComponent(token)}`).then(r=>r.json());
+        if (j.error) { if (/too many calls|rate limit|#17|#4\b/i.test(j.error.message||'')) backoffUntil = Date.now() + 15*60000; return; }
+        if (!dead) setMetaStatus(s=>{ const n={...s}; for (const id of ids){ const o=j[id]; if(o) n[id] = o.effective_status || o.status || '?'; } return n; });
+      } catch(_) {}
     };
     pull();
-    const t = setInterval(pull, 45000);
+    const t = setInterval(pull, 180000);
     return ()=>{ dead=true; clearInterval(t); };
   }, [key]);
 

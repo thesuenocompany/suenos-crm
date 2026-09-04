@@ -5658,23 +5658,28 @@ function AdPerformanceView() {
     setDidAutoRefresh(true);
   }, [datePreset]);
 
-  // Keep on/off status live: poll each campaign's effective status every 45s
-  // (lightweight status-only fetch — no insights) so the header reflects reality
-  // even when a weather rule flips a campaign while you're watching.
+  // Keep on/off status live WITHOUT hammering Meta: one BATCHED status call for
+  // all campaigns (up to 50 ids per request), every 3 min, and only while the
+  // tab is visible. Backs off if Meta reports a rate limit.
   const campIdsKey = campaigns.map(c=>c.id).join(',');
   useEffect(() => {
     if (!token || campaigns.length === 0) return;
-    let dead = false;
+    let dead = false, backoffUntil = 0;
+    const ids = campaigns.map(c=>c.campaignId).filter(Boolean);
+    const byCamp = {}; campaigns.forEach(c=>{ if (c.campaignId) byCamp[c.campaignId] = c.id; });
     const pull = async () => {
-      for (const c of campaigns) {
+      if (dead || document.visibilityState !== 'visible' || Date.now() < backoffUntil) return;
+      for (let i=0; i<ids.length; i+=50) {
+        const chunk = ids.slice(i, i+50);
         try {
-          const j = await fetch(`${BASE}/${c.campaignId}?fields=effective_status,status&access_token=${token}`).then(r=>r.json());
-          if (!dead && !j.error) setLiveStatus(s => ({ ...s, [c.id]: j.effective_status || j.status }));
-        } catch(_) {}
-        await new Promise(r=>setTimeout(r,120));
+          const j = await fetch(`${BASE}/?ids=${encodeURIComponent(chunk.join(','))}&fields=effective_status,status&access_token=${token}`).then(r=>r.json());
+          if (j.error) { if (/too many calls|rate limit|#17|#4\b/i.test(j.error.message||'')) { backoffUntil = Date.now() + 15*60000; } break; }
+          if (!dead) setLiveStatus(s => { const n = { ...s }; for (const cid of chunk) { const o = j[cid]; if (o) n[byCamp[cid]] = o.effective_status || o.status; } return n; });
+        } catch(_) { break; }
+        await new Promise(r=>setTimeout(r, 400));
       }
     };
-    const t = setInterval(pull, 45000);
+    const t = setInterval(pull, 180000);
     return () => { dead = true; clearInterval(t); };
   }, [token, campIdsKey]);
   const effStatusOf = c => liveStatus[c.id] || c.status;
