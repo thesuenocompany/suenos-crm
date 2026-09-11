@@ -1584,6 +1584,20 @@ function UsersView() {
   const [depositInput, setDepositInput] = useState(String(state.bottleDeposit ?? 0));
   const [depositSaving, setDepositSaving] = useState(false);
   useEffect(() => { setDepositInput(String(state.bottleDeposit ?? 0)); }, [state.bottleDeposit]);
+  // Accounting copy address for invoices
+  const [acctEmailInput, setAcctEmailInput] = useState(state.accountingEmail || '');
+  const [acctCcInput, setAcctCcInput] = useState(state.accountingCcOnSend !== false);
+  const [acctSaving, setAcctSaving] = useState(false);
+  useEffect(() => { setAcctEmailInput(state.accountingEmail || ''); }, [state.accountingEmail]);
+  useEffect(() => { setAcctCcInput(state.accountingCcOnSend !== false); }, [state.accountingCcOnSend]);
+  async function saveAccounting() {
+    const e = acctEmailInput.trim();
+    if (e && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { showToast(dispatch, 'Enter a valid email address', 'error'); return; }
+    setAcctSaving(true);
+    try { await dbSaveAccountingSettings(dispatch, e, acctCcInput); showToast(dispatch, 'Accounting email saved'); }
+    catch(err) { showToast(dispatch, String(err), 'error'); }
+    finally { setAcctSaving(false); }
+  }
   async function saveDeposit() {
     setDepositSaving(true);
     try { await dbSaveBottleDeposit(dispatch, parseFloat(depositInput) || 0); showToast(dispatch, 'Bottle deposit saved'); }
@@ -2079,6 +2093,28 @@ function UsersView() {
             <Btn size="sm" onClick={saveInvoiceFooter} disabled={footerSaving}>
               {footerSaving ? 'Saving…' : 'Save Footer'}
             </Btn>
+          </div>
+        </div>
+      </Card>
+
+      {/* Accounting Copy */}
+      <Card cls="p-4 mb-6">
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">🧾 Accounting Copy</p>
+          <p className="text-xs text-gray-500">A copy of every emailed invoice is sent to this address for bookkeeping. Leave blank to disable.</p>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 w-20 flex-shrink-0">Email</span>
+            <input type="email" value={acctEmailInput} onChange={e=>setAcctEmailInput(e.target.value)}
+              placeholder="accounting@example.com"
+              className="flex-1 px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500" />
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" checked={acctCcInput} onChange={e=>setAcctCcInput(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500" />
+            <span className="text-xs text-gray-600 dark:text-gray-300">Automatically copy accounting whenever an invoice is sent to a store or account</span>
+          </label>
+          <div className="flex justify-end">
+            <Btn size="sm" onClick={saveAccounting} disabled={acctSaving}>{acctSaving ? 'Saving…' : 'Save Accounting Email'}</Btn>
           </div>
         </div>
       </Card>

@@ -212,6 +212,8 @@ const INITIAL_STATE = {
   // invoice
   invoiceFooter: '',
   bottleDeposit: 0,   // flat per-bottle container deposit (tax-exempt), applied to invoices
+  accountingEmail: '',        // bookkeeping/accounting copy address for invoices (managed in Settings)
+  accountingCcOnSend: true,   // auto-send a copy to accounting whenever an invoice is emailed
   // voice & tone brand guidelines (pasted text, stored in app_settings)
   voiceTone: '',
   // structured brand voice controls for the AI writer (stored in app_settings as JSON)
@@ -329,6 +331,8 @@ function reducer(s, a) {
     case 'SET_PROMO_SETTINGS':   return {...s, promoSettings:{...s.promoSettings, ...a.payload}};
     case 'SET_INVOICE_FOOTER':      return {...s, invoiceFooter:a.payload};
     case 'SET_BOTTLE_DEPOSIT':      return {...s, bottleDeposit:a.payload};
+    case 'SET_ACCOUNTING_EMAIL':    return {...s, accountingEmail:a.payload};
+    case 'SET_ACCOUNTING_CC':       return {...s, accountingCcOnSend:a.payload};
     case 'SET_VOICE_TONE':          return {...s, voiceTone:a.payload};
     case 'SET_VOICE_PROFILE':       return {...s, voiceProfile:a.payload};
     case 'PRICING_FETCHING':     return {...s, pricingFetching:a.payload};
@@ -400,6 +404,10 @@ async function loadAllData(dispatch) {
         if (footerRow) dispatch({ type:'SET_INVOICE_FOOTER', payload: footerRow.value || '' });
         const depositRow = settings.find(r=>r.key==='bottle_deposit');
         if (depositRow) dispatch({ type:'SET_BOTTLE_DEPOSIT', payload: parseFloat(depositRow.value) || 0 });
+        const acctEmailRow = settings.find(r=>r.key==='accounting_email');
+        if (acctEmailRow) dispatch({ type:'SET_ACCOUNTING_EMAIL', payload: acctEmailRow.value || '' });
+        const acctCcRow = settings.find(r=>r.key==='accounting_cc_enabled');
+        if (acctCcRow) dispatch({ type:'SET_ACCOUNTING_CC', payload: acctCcRow.value === 'true' });
         const provRatesRow = settings.find(r=>r.key==='province_tax_rates');
         if (provRatesRow?.value) {
           try { dispatch({ type:'SET_PROVINCE_TAX_RATES', payload: JSON.parse(provRatesRow.value) }); } catch(e) {}
@@ -498,6 +506,15 @@ async function dbSaveVoiceTone(dispatch, text) {
   dispatch({ type:'SET_VOICE_TONE', payload: text });
   await sb.from('app_settings').upsert([
     { key:'voice_tone_instructions', value: text },
+  ], { onConflict:'key' });
+}
+async function dbSaveAccountingSettings(dispatch, email, ccOnSend) {
+  const e = (email || '').trim();
+  dispatch({ type:'SET_ACCOUNTING_EMAIL', payload: e });
+  dispatch({ type:'SET_ACCOUNTING_CC', payload: !!ccOnSend });
+  await sb.from('app_settings').upsert([
+    { key:'accounting_email',      value: e },
+    { key:'accounting_cc_enabled', value: ccOnSend ? 'true' : 'false' },
   ], { onConflict:'key' });
 }
 

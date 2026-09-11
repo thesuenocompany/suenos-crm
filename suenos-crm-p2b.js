@@ -1678,8 +1678,10 @@ function InvoiceModal({ open, onClose, order }) {
   const { state, dispatch } = useApp();
   const [sendingStore, setSendingStore] = React.useState(false);
   const [sendingAcc,   setSendingAcc]   = React.useState(false);
+  const [sendingAcct,  setSendingAcct]  = React.useState(false);
   const [storeEmailTo, setStoreEmailTo] = React.useState('');
   const [accEmailTo,   setAccEmailTo]   = React.useState('');
+  const [acctEmailTo,  setAcctEmailTo]  = React.useState('');
 
   const acc   = open && order ? state.accounts.find(a => a.id === order.accountId) : null;
   const store = open && order
@@ -1693,7 +1695,8 @@ function InvoiceModal({ open, onClose, order }) {
     if (!open || !order) return;
     setStoreEmailTo(store?.email || '');
     setAccEmailTo(acc?.email || '');
-  }, [order?.id, open]);
+    setAcctEmailTo(state.accountingEmail || '');
+  }, [order?.id, open, state.accountingEmail]);
 
   if (!open || !order) return null;
 
@@ -1776,6 +1779,25 @@ function InvoiceModal({ open, onClose, order }) {
     invoice_html:       html,
   };
 
+  // Send a copy of this invoice to the accounting address. Returns true on
+  // success. Used both as an auto-CC after a store/account send and as its own
+  // standalone action. Never throws — reports its own toast on failure.
+  async function sendAccountingCopy(silent) {
+    const to = acctEmailTo.trim();
+    if (!to) { if (!silent) showToast(dispatch, 'No accounting email set — add one in Settings', 'error'); return false; }
+    if (!ejsReady()) return false;
+    try {
+      emailjs.init(EMAILJS_PUBLIC_KEY);
+      await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_INVOICE_TEMPLATE_ID, { email: to, to_name: 'Accounting', ...invoicePayload });
+      return true;
+    } catch(err) {
+      showToast(dispatch, 'Accounting copy failed: ' + (err?.text || err?.message || 'error'), 'error');
+      return false;
+    }
+  }
+
+  const ccAccounting = state.accountingCcOnSend !== false && !!acctEmailTo.trim();
+
   async function handleEmailStore() {
     if (!storeEmailTo.trim()) { showToast(dispatch, 'Enter a store email address', 'error'); return; }
     if (!ejsReady()) return;
@@ -1783,7 +1805,8 @@ function InvoiceModal({ open, onClose, order }) {
     try {
       emailjs.init(EMAILJS_PUBLIC_KEY);
       await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_INVOICE_TEMPLATE_ID, { email: storeEmailTo.trim(), to_name: store?.name || '', ...invoicePayload });
-      showToast(dispatch, 'Invoice sent to store: ' + storeEmailTo.trim(), 'success');
+      const cc = ccAccounting ? await sendAccountingCopy(true) : false;
+      showToast(dispatch, 'Invoice sent to store: ' + storeEmailTo.trim() + (cc ? ' (copied to accounting)' : ''), 'success');
     } catch(err) { showToast(dispatch, 'Email failed: ' + (err?.text || err?.message || 'error'), 'error'); }
     setSendingStore(false);
   }
@@ -1795,9 +1818,18 @@ function InvoiceModal({ open, onClose, order }) {
     try {
       emailjs.init(EMAILJS_PUBLIC_KEY);
       await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_INVOICE_TEMPLATE_ID, { email: accEmailTo.trim(), to_name: acc?.liquorLicenseName || acc?.name || '', ...invoicePayload });
-      showToast(dispatch, 'Invoice sent to account: ' + accEmailTo.trim(), 'success');
+      const cc = ccAccounting ? await sendAccountingCopy(true) : false;
+      showToast(dispatch, 'Invoice sent to account: ' + accEmailTo.trim() + (cc ? ' (copied to accounting)' : ''), 'success');
     } catch(err) { showToast(dispatch, 'Email failed: ' + (err?.text || err?.message || 'error'), 'error'); }
     setSendingAcc(false);
+  }
+
+  async function handleEmailAccounting() {
+    if (!acctEmailTo.trim()) { showToast(dispatch, 'Enter an accounting email address', 'error'); return; }
+    setSendingAcct(true);
+    const ok = await sendAccountingCopy(false);
+    if (ok) showToast(dispatch, 'Invoice sent to accounting: ' + acctEmailTo.trim(), 'success');
+    setSendingAcct(false);
   }
 
   return (
@@ -1811,7 +1843,8 @@ function InvoiceModal({ open, onClose, order }) {
           <div className="flex items-center gap-2">
             <Btn size="sm" variant="secondary" onClick={handlePrint}><Ic n="download" cls="w-3.5 h-3.5 mr-1"/>Save PDF</Btn>
             <Btn size="sm" variant="secondary" onClick={handleEmailStore} disabled={sendingStore}><Ic n="mail" cls="w-3.5 h-3.5 mr-1"/>{sendingStore?'Sending…':'Send to Store'}</Btn>
-            <Btn size="sm" onClick={handleEmailAccount} disabled={sendingAcc}><Ic n="mail" cls="w-3.5 h-3.5 mr-1"/>{sendingAcc?'Sending…':'Send to Account'}</Btn>
+            <Btn size="sm" variant="secondary" onClick={handleEmailAccount} disabled={sendingAcc}><Ic n="mail" cls="w-3.5 h-3.5 mr-1"/>{sendingAcc?'Sending…':'Send to Account'}</Btn>
+            <Btn size="sm" onClick={handleEmailAccounting} disabled={sendingAcct}><Ic n="mail" cls="w-3.5 h-3.5 mr-1"/>{sendingAcct?'Sending…':'Send to Accounting'}</Btn>
             <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition"><Ic n="x" cls="w-4 h-4"/></button>
           </div>
         </div>
@@ -1827,6 +1860,13 @@ function InvoiceModal({ open, onClose, order }) {
             <input type="email" value={accEmailTo} onChange={e=>setAccEmailTo(e.target.value)}
               placeholder="account@example.com"
               className="flex-1 text-xs border border-gray-200 dark:border-gray-700 rounded-md px-2 py-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+          </div>
+          <div className="col-span-2 flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 w-14 flex-shrink-0">Accounting</span>
+            <input type="email" value={acctEmailTo} onChange={e=>setAcctEmailTo(e.target.value)}
+              placeholder="accounting@example.com"
+              className="flex-1 text-xs border border-gray-200 dark:border-gray-700 rounded-md px-2 py-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+            <span className="text-[10px] text-gray-400 flex-shrink-0">{ccAccounting ? 'Auto-copied on send' : 'Manual only'}</span>
           </div>
         </div>
         <div className="flex-1 overflow-auto p-3 bg-gray-50 dark:bg-gray-950">
