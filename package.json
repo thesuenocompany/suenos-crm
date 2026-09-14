@@ -1,0 +1,7 @@
+{
+  "name": "suenos-crm-agent-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test:agent": "node --test tests/agent-bridge.test.mjs" },
+  "devDependencies": { "zod": "3.25.76" }
+}
