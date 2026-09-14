@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Unsubscribed · Sueños Spirits</title>
+<style>
+  :root{color-scheme:light dark}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+       display:grid;place-items:center;min-height:100vh;margin:0;padding:24px;
+       background:#F5F0E6;color:#1d2321}
+  @media (prefers-color-scheme:dark){body{background:#151311;color:#f0ece7}}
+  .card{max-width:440px;text-align:center}
+  .mark{width:44px;height:44px;border-radius:14px;background:#2E8A97;color:#fff;
+        display:grid;place-items:center;margin:0 auto 16px;font-size:20px}
+  h1{font-size:20px;margin:0 0 10px;font-weight:700}
+  p{font-size:15px;line-height:1.6;opacity:.75;margin:0 0 6px}
+  .addr{font-size:12px;opacity:.5;margin-top:22px;line-height:1.5}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark">✓</div>
+    <h1 id="h">You're unsubscribed</h1>
+    <p id="p">You won't receive any further emails from Sueños Spirits at this address.
+       No further action is needed.</p>
+    <div class="addr">
+      Sueños Spirits<br>
+      973 Lakeshore Drive, Salmon Arm, BC
+    </div>
+  </div>
+<script>
+  // The endpoint redirects here with ?status=error if the write failed, so the
+  // person is never told they're unsubscribed when they aren't.
+  if (new URLSearchParams(location.search).get('status') === 'error') {
+    document.getElementById('h').textContent = 'Something went wrong';
+    document.getElementById('p').textContent =
+      "We couldn't process that just now. Please reply to the email directly and we'll remove you manually.";
+    document.querySelector('.mark').textContent = '!';
+    document.querySelector('.mark').style.background = '#a33b32';
+  }
+</script>
+</body>
+</html>

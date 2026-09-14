@@ -9,7 +9,7 @@ python3 assemble_cloud.py
 echo "→ Staging dist/…"
 rm -rf dist 2>/dev/null || true
 mkdir -p dist
-cp index.html sw.js manifest.json \
+cp index.html sw.js manifest.json unsubscribed.html \
    apple-touch-icon.png icon-192.png icon-512.png icon-maskable-512.png \
    dist/
 
