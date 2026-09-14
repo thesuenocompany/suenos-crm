@@ -18,7 +18,8 @@ const ORDER_ADMIN_EMAIL            = 'jason@suenos.ca';
 const EDGE_FN_URL         = `${SUPABASE_URL}/functions/v1`;
 
 // ── Ad Creative Image Generator (Fal.ai + Canvas compositing) ────────────────
-const FAL_API_KEY             = 'YOUR_FAL_API_KEY'; // fal.ai → Dashboard → Keys
+// FAL key intentionally NOT in the browser bundle — image generation goes
+// through the generate-ad-image Edge Function, which holds the key as a secret.
 const GENERATE_IMAGE_FN       = 'generate-ad-image'; // Supabase Edge Function name
 const SUENOS_LOGO_URL         = 'YOUR_SUENOS_LOGO_URL'; // public URL to master Sueños logo PNG
 

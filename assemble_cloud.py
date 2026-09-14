@@ -30,7 +30,8 @@ EMAILJS_TEMPLATE_ID = 'template_wxt97cv'
 EMAILJS_SAMPLING_TEMPLATE_ID = 'template_y92jxkn'
 EMAILJS_TASK_TEMPLATE_ID     = 'template_6ns3oh9'
 EMAILJS_AD_SPEC_TEMPLATE_ID  = 'template_90mt01i'
-FAL_API_KEY     = '57423b31-b38d-49ec-bd13-741a417f0fbd:62ce8032d4750d6b36df9dc152b1689a'
+# FAL key removed — it was injected into index.html (public) but never used.
+# The key lives as a Supabase Edge Function secret for generate-ad-image.
 SUENOS_LOGO_URL = 'YOUR_SUENOS_LOGO_URL'  # paste public URL after uploading logo
 GOOGLE_MAPS_KEY = 'AIzaSyAj-IjC1HtBEINhDDJnXE5XcLPAJ7L3kbI'
 cloud1 = cloud1.replace("'YOUR_SUPABASE_URL'", f"'{SUPABASE_URL}'")\
@@ -41,7 +42,6 @@ cloud1 = cloud1.replace("'YOUR_SUPABASE_URL'", f"'{SUPABASE_URL}'")\
                .replace("'YOUR_EMAILJS_SAMPLING_TEMPLATE_ID'", f"'{EMAILJS_SAMPLING_TEMPLATE_ID}'")\
                .replace("'YOUR_EMAILJS_TASK_TEMPLATE_ID'", f"'{EMAILJS_TASK_TEMPLATE_ID}'")\
                .replace("'YOUR_EMAILJS_AD_SPEC_TEMPLATE_ID'", f"'{EMAILJS_AD_SPEC_TEMPLATE_ID}'")\
-               .replace("'YOUR_FAL_API_KEY'", f"'{FAL_API_KEY}'")\
                .replace("'YOUR_SUENOS_LOGO_URL'", f"'{SUENOS_LOGO_URL}'")
 
 # p2b: strip LoginScreen, NAV_CFG, Sidebar duplicates
