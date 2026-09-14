@@ -4,7 +4,7 @@ Companion to the OAuth/MCP service in `thesuenocompany/Suenos-OS`. The bridge su
 
 ## Deploy
 
-Apply `supabase/migrations/20260914203918_suenos_agent_bridge.sql` to CRM project `dowfjjthshbbgnvwxzjv`. Deploy the complete `supabase/functions/suenos-agent-bridge` directory:
+Apply `supabase/migrations/20260914205953_suenos_agent_bridge.sql` to CRM project `dowfjjthshbbgnvwxzjv`. Deploy the complete `supabase/functions/suenos-agent-bridge` directory:
 
 ```sh
 supabase functions deploy suenos-agent-bridge --project-ref dowfjjthshbbgnvwxzjv --no-verify-jwt
