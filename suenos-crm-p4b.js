@@ -6779,7 +6779,9 @@ function GeocoderCard() {
 }
 
 // ── Licence Prospects (Rep + Admin) ──────────────────────────────────────────
-function LicenseProspectsView() {
+// Renamed: now rendered as the "Browse" tab by LicenseProspectsView
+// (see suenos-crm-prospecting.js).
+function LicenseProspectsBrowse() {
   const { state, dispatch } = useApp();
   const { accounts, users, licenseDismissals } = state;
   const user = state.user;
