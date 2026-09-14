@@ -1,0 +1,8 @@
+# Build output — Netlify regenerates this from source parts on every deploy.
+dist/
+
+# Dependencies
+node_modules/
+
+# OS noise
+.DS_Store
