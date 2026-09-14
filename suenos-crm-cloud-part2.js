@@ -8,7 +8,10 @@ const _VALID_HASH_VIEWS = ['accounts','visits','orders','tastings','calendar','m
   'reports','map','tasks','products','stores','sales-import','targets','users','regions',
   'retail-pricing','dashboard-email','cluster-ads','ad-creatives','ad-performance','licence-prospects',
   'order-promo','my-promo-orders','manage-promo','manage-promo-categories','promo-orders-admin','promo-reporting',
-  'account-detail'];
+  'account-detail',
+  // In-progress entry forms — restorable on reload so a refresh returns the rep
+  // to the form (their draft is auto-restored from localStorage) instead of the dashboard.
+  'new-account','new-visit','new-order','volume-report'];
 
 // ── SET PASSWORD SCREEN (shown after clicking reset link) ──────
 function SetPasswordScreen({ onDone, forced = false, userId = null }) {
@@ -109,12 +112,17 @@ function App() {
         setRecoverySession(session);
         return;
       }
+      // Always keep the freshest session/JWT in state.
       dispatch({ type: 'SET_SESSION', payload: session });
-      if (session) {
-        // Stamp last_login_at on actual sign-in (not page reload / token refresh)
-        if (event === 'SIGNED_IN') {
-          sb.from('profiles').update({ last_login_at: new Date().toISOString() }).eq('id', session.user.id);
-        }
+      if (!session) return;
+      // Only do a FULL data (re)load on a genuine new sign-in. Supabase also
+      // fires TOKEN_REFRESHED (~hourly and on tab focus) and USER_UPDATED — those
+      // used to re-fetch everything, which interrupted data entry and bounced
+      // reps around. The initial load is handled by getSession() above; a token
+      // refresh just needs the new JWT, not a reload. Reps can pull-to-refresh
+      // or reopen a view to get fresh data.
+      if (event === 'SIGNED_IN') {
+        sb.from('profiles').update({ last_login_at: new Date().toISOString() }).eq('id', session.user.id);
         loadUserAndData(session);
       }
     });
@@ -319,6 +327,12 @@ function AccountFormModal({ open, onClose, existing, onCreated }) {
   const placesAcRef    = React.useRef(null);
   const nameDebTimer   = React.useRef(null);
 
+  // Draft recovery: a NEW-account form autosaves to localStorage so a mid-entry
+  // reload (mobile tab discard, redeploy, accidental refresh) can't lose the work.
+  const DRAFT_KEY = 'crm_draft_account_v1';
+  function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch(e) {} }
+  const draftFields = ['name','address','contact','email','phone','notes','licenseNumber','website'];
+
   useEffect(() => {
     if (open) {
       setForm(isEdit ? {...existing} : blank);
@@ -327,8 +341,32 @@ function AccountFormModal({ open, onClose, existing, onCreated }) {
       setForceCreate(false);
       setShowGoogleSearch(false);
       if (nameRef.current) nameRef.current.value = isEdit ? existing?.name||'' : '';
+      // Restore an unsaved draft (create mode only)
+      if (!isEdit) {
+        try {
+          const raw = localStorage.getItem(DRAFT_KEY);
+          const d = raw ? JSON.parse(raw) : null;
+          if (d && typeof d === 'object' && draftFields.some(k => (d[k]||'').toString().trim())) {
+            setForm(f => ({ ...f, ...d }));
+            if (d.name) { setNameQ(d.name); if (nameRef.current) nameRef.current.value = d.name; }
+            dispatch({ type:'TOAST', payload:{ msg:'Restored your unsaved account draft', type:'info' } });
+          }
+        } catch(e) {}
+      }
     }
   }, [open]);
+
+  // Autosave the in-progress NEW account + warn before an unload while dirty
+  useEffect(() => {
+    if (!open || isEdit) return;
+    const snapshot = { ...form, name: (nameRef.current?.value || nameQ || form.name || '') };
+    const dirty = draftFields.some(k => (snapshot[k]||'').toString().trim());
+    try { if (dirty) localStorage.setItem(DRAFT_KEY, JSON.stringify(snapshot)); } catch(e) {}
+    if (!dirty) return;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [form, nameQ, open, isEdit]);
 
   // Google Places attached ONLY to the separate search box, not the name input
   useEffect(() => {
@@ -438,7 +476,12 @@ function AccountFormModal({ open, onClose, existing, onCreated }) {
       showToast(dispatch,'Account updated');
     } else {
       const newAcc = {...formWithName, id:genId(), menuPlacements:{}, lastVisit:null, lastOrder:null, createdAt:today()};
-      await db.dbAddAccount(dispatch, newAcc);
+      try {
+        await db.dbAddAccount(dispatch, newAcc);   // throws if the DB write failed
+      } catch(err) {
+        return;   // stay on the form with the data intact; dbAddAccount already showed the error
+      }
+      clearDraft();   // saved for real — discard the recovery draft
       if (form.email) showToast(dispatch,`Account created — sell sheet sent to ${form.email}`,'info');
       else showToast(dispatch,'Account created');
       onClose();
@@ -601,13 +644,41 @@ function NewVisit() {
     if(acc?.contact) set('contact', acc.contact);
   },[form.accountId]);
 
+  // Draft recovery so a mid-entry reload can't lose a visit in progress.
+  const VDRAFT_KEY = 'crm_draft_visit_v1';
+  function clearVisitDraft() { try { localStorage.removeItem(VDRAFT_KEY); } catch(e) {} }
+  useEffect(() => {
+    if (prefill) return; // account-scoped entry keeps its context, skip restore
+    try {
+      const raw = localStorage.getItem(VDRAFT_KEY);
+      const d = raw ? JSON.parse(raw) : null;
+      if (d && typeof d === 'object' && (d.accountId || (d.notes||'').trim() || (d.outcome||'').trim())) {
+        setForm(f => ({ ...f, ...d }));
+        dispatch({ type:'TOAST', payload:{ msg:'Restored your unsaved visit draft', type:'info' } });
+      }
+    } catch(e) {}
+  }, []);
+  useEffect(() => {
+    const dirty = form.accountId || (form.notes||'').trim() || (form.outcome||'').trim();
+    try { if (dirty) localStorage.setItem(VDRAFT_KEY, JSON.stringify(form)); } catch(e) {}
+    if (!dirty) return;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [form]);
+
   async function submit(e) {
     e.preventDefault();
     if(!form.accountId||!form.type) return;
     const visit = {...form, id:genId(), repId:state.user.id};
-    await db.dbAddVisit(dispatch, visit);
+    try {
+      await db.dbAddVisit(dispatch, visit);   // throws if the DB write failed
+    } catch(err) {
+      return;   // stay on the form with the data intact; the error was already shown
+    }
     const acc = state.accounts.find(a=>a.id===form.accountId);
     if (acc) await db.dbUpdAccount(dispatch, {...acc, lastVisit:form.date});
+    clearVisitDraft();
     showToast(dispatch,'Visit logged');
     dispatch({type:'NAV', view:prefill?'account-detail':'visits', params:prefill?{id:prefill}:{}});
   }

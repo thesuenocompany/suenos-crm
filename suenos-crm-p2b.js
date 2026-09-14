@@ -54,7 +54,7 @@ const NAV_CFG = {
     { s:'Main',       items:[{v:'dashboard',n:'dashboard',l:'Dashboard'},{v:'accounts',n:'accounts',l:'Accounts'},{v:'visits',n:'visits',l:'Visits'},{v:'tasks',n:'tasks',l:'Tasks'}] },
     { s:'Sales',      items:[{v:'orders',n:'orders',l:'Orders'},{v:'trade-leads',n:'accounts',l:'Trade Leads'},{v:'menu-placements',n:'menu',l:'Menu Placements'},{v:'tastings',n:'tastings',l:'Tastings'},{v:'calendar',n:'calendar',l:'Events Calendar'},{v:'sampling-request',n:'mail',l:'Sampling Request'}] },
     { s:'Management', items:[{v:'products',n:'products',l:'Products'},{v:'stores',n:'stores',l:'Fulfillment Stores'},{v:'sales-import',n:'download',l:'Sales Import'},{v:'targets',n:'targets',l:'Targets'},{v:'users',n:'users',l:'Users'},{v:'retail-pricing',n:'tag',l:'Retail Pricing'},{v:'licenses-admin',n:'accounts',l:'BC Licences Upload'},{v:'dashboard-email',n:'mail',l:'Dashboard Email'}] },
-    { s:'Analytics',  items:[{v:'reports',n:'reports',l:'Reports'},{v:'map',n:'map',l:'Account Map'}] },
+    { s:'Analytics',  items:[{v:'reports',n:'reports',l:'Reports'},{v:'volume-report',n:'reports',l:'Volume Report'},{v:'map',n:'map',l:'Account Map'}] },
     { s:'Prospecting', items:[{v:'licence-prospects',n:'accounts',l:'Licence Prospects'}] },
   ],
   rep: [

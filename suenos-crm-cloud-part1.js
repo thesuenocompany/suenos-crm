@@ -258,6 +258,7 @@ function reducer(s, a) {
     case 'UPD_ACCOUNT':    return {...s, accounts:s.accounts.map(x=>x.id===a.payload.id?a.payload:x)};
     case 'DEL_ACCOUNT':    return {...s, accounts:s.accounts.filter(x=>x.id!==a.id)};
     case 'ADD_VISIT':      return {...s, visits:[...s.visits, a.payload]};
+    case 'DEL_VISIT':      return {...s, visits:s.visits.filter(x=>x.id!==a.id)};
     case 'ADD_ORDER':      return {...s, orders:[...s.orders, a.payload]};
     case 'UPD_ORDER':      return {...s, orders:s.orders.map(x=>x.id===a.payload.id?a.payload:x)};
     case 'DEL_ORDER':      return {...s, orders:s.orders.filter(x=>x.id!==a.id)};
@@ -812,7 +813,14 @@ async function dbAddAccount(dispatch, account) {
     pst_override:account.pstOverride||null,
     menu_placements:account.menuPlacements||{},
   });
-  if (error) { console.error(error); dispatch({type:'TOAST',payload:{msg:'Save failed: '+error.message,type:'error'}}); }
+  if (error) {
+    console.error(error);
+    // Roll back the optimistic add so the UI never shows a record that did not
+    // actually persist, and throw so the form keeps the user + their data.
+    dispatch({type:'DEL_ACCOUNT', id:account.id});
+    dispatch({type:'TOAST',payload:{msg:'NOT saved — '+error.message+'. Please retry.',type:'error'}});
+    throw new Error(error.message);
+  }
 }
 async function dbDelAccount(dispatch, id) {
   const {error} = await sb.from('accounts').delete().eq('id', id);
@@ -959,7 +967,14 @@ async function dbAddVisit(dispatch, visit) {
     outcome:visit.outcome, follow_up_date:visit.followUpDate||null,
     rep_id:visit.repId, checks:visit.checks||{}, source:visit.source||null,
   });
-  if (error) console.error(error);
+  if (error) {
+    console.error(error);
+    // Roll back the optimistic add + surface loudly + throw (previously this was
+    // a silent console.error, so failed visits looked saved then vanished).
+    dispatch({type:'DEL_VISIT', id:visit.id});
+    dispatch({type:'TOAST',payload:{msg:'Visit NOT saved — '+error.message+'. Please retry.',type:'error'}});
+    throw new Error(error.message);
+  }
 }
 async function dbAddOrder(dispatch, order) {
   dispatch({type:'ADD_ORDER', payload:order});
@@ -988,10 +1003,11 @@ async function dbAddOrder(dispatch, order) {
     const fallback = await sb.from('orders').insert(coreRow);
     if (fallback.error) {
       console.error('[dbAddOrder] Core insert also failed:', fallback.error);
-      showToast(dispatch, `Order not saved: ${fallback.error.message}`, 'error');
-      // Remove optimistic entry from state so user knows it didn't persist
+      showToast(dispatch, `Order NOT saved: ${fallback.error.message}. Please retry.`, 'error');
+      // Remove optimistic entry from state so user knows it didn't persist,
+      // and throw so the order form keeps the user on the page with their data.
       dispatch({type:'DEL_ORDER', id:order.id});
-      return;
+      throw new Error(fallback.error.message);
     }
     // Core insert succeeded — show a warning so admin knows to run the SQL migration
     console.warn('[dbAddOrder] Saved with core columns only — run orders SQL migration to add tax fields');

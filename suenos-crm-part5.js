@@ -6,7 +6,7 @@ function AppRouter() {
   const { view, params, user } = state;
 
   // Guard views by role — redirect instead of showing error
-  const adminOnly = ['products','stores','sales-import','targets','users','regions','retail-pricing','cluster-ads','media-desk','weather-ads','ad-creatives','licenses-admin','dashboard-email','manage-promo','manage-promo-categories','promo-orders-admin','promo-reporting','trade-leads','social','email-analytics'];
+  const adminOnly = ['products','stores','sales-import','targets','users','regions','retail-pricing','cluster-ads','media-desk','weather-ads','ad-creatives','licenses-admin','dashboard-email','manage-promo','manage-promo-categories','promo-orders-admin','promo-reporting','trade-leads','social','email-analytics','volume-report'];
   if (adminOnly.includes(view) && user.role !== 'admin') {
     dispatch({ type:'NAV', view:'dashboard' });
     return null;
@@ -33,6 +33,7 @@ function AppRouter() {
     case 'products':        return <ProductsView />;
     case 'stores':          return <StoresView />;
     case 'reports':         return <ReportsView />;
+    case 'volume-report':   return <VolumeReportView />;
     case 'map':             return <MapView />;
     case 'users':           return <UsersView />;
     case 'targets':         return <TargetsView />;

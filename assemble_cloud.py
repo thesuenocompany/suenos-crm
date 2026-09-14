@@ -17,6 +17,7 @@ with open(f'{BASE}/suenos-crm-mediadesk.js')    as f: mediadesk = f.read()
 with open(f'{BASE}/suenos-crm-voicevisit.js')   as f: voicevisit = f.read()
 with open(f'{BASE}/suenos-crm-weather.js')      as f: weather = f.read()
 with open(f'{BASE}/suenos-crm-email.js')        as f: email = f.read()
+with open(f'{BASE}/suenos-crm-volumereport.js') as f: volumereport = f.read()
 with open(f'{BASE}/suenos-crm-part5.js')        as f: p5_src = f.read()
 with open(f'{BASE}/suenos-crm-cloud-part2.js')  as f: cloud2 = f.read()
 
@@ -369,7 +370,7 @@ FOOT = '''
 </body>
 </html>'''
 
-assembled = HEAD + cloud1 + '\n' + ui + '\n' + p2b + '\n' + part3 + '\n' + p4b + '\n' + promo + '\n' + adanalysis + '\n' + social + '\n' + mediadesk + '\n' + voicevisit + '\n' + weather + '\n' + email + '\n' + part5 + '\n' + cloud2 + FOOT
+assembled = HEAD + cloud1 + '\n' + ui + '\n' + p2b + '\n' + part3 + '\n' + p4b + '\n' + promo + '\n' + adanalysis + '\n' + social + '\n' + mediadesk + '\n' + voicevisit + '\n' + weather + '\n' + email + '\n' + volumereport + '\n' + part5 + '\n' + cloud2 + FOOT
 assembled = assembled.replace('GOOGLE_MAPS_KEY_PLACEHOLDER', GOOGLE_MAPS_KEY)
 
 # authLoading fix is baked into suenos-crm-cloud-part2.js directly
