@@ -263,8 +263,7 @@ const ORDER_ADMIN_EMAIL            = 'jason@suenos.ca';
 const EDGE_FN_URL         = `${SUPABASE_URL}/functions/v1`;
 
 // ── Ad Creative Image Generator (Fal.ai + Canvas compositing) ────────────────
-// FAL key intentionally NOT in the browser bundle — image generation goes
-// through the generate-ad-image Edge Function, which holds the key as a secret.
+const FAL_API_KEY             = '57423b31-b38d-49ec-bd13-741a417f0fbd:62ce8032d4750d6b36df9dc152b1689a'; // fal.ai → Dashboard → Keys
 const GENERATE_IMAGE_FN       = 'generate-ad-image'; // Supabase Edge Function name
 const SUENOS_LOGO_URL         = 'YOUR_SUENOS_LOGO_URL'; // public URL to master Sueños logo PNG
 
@@ -460,6 +459,8 @@ const INITIAL_STATE = {
   bottleDeposit: 0,   // flat per-bottle container deposit (tax-exempt), applied to invoices
   accountingEmail: '',        // bookkeeping/accounting copy address for invoices (managed in Settings)
   accountingCcOnSend: true,   // auto-send a copy to accounting whenever an invoice is emailed
+  // Prospecting agent output (admin, read-only): outreach drafts + enrichment
+  outreach: [], enrichment: [], licenceInfo: {},
   // voice & tone brand guidelines (pasted text, stored in app_settings)
   voiceTone: '',
   // structured brand voice controls for the AI writer (stored in app_settings as JSON)
@@ -580,6 +581,7 @@ function reducer(s, a) {
     case 'SET_BOTTLE_DEPOSIT':      return {...s, bottleDeposit:a.payload};
     case 'SET_ACCOUNTING_EMAIL':    return {...s, accountingEmail:a.payload};
     case 'SET_ACCOUNTING_CC':       return {...s, accountingCcOnSend:a.payload};
+    case 'SET_OUTREACH':            return {...s, outreach:a.payload.outreach, enrichment:a.payload.enrichment, licenceInfo:a.payload.licenceInfo};
     case 'SET_VOICE_TONE':          return {...s, voiceTone:a.payload};
     case 'SET_VOICE_PROFILE':       return {...s, voiceProfile:a.payload};
     case 'PRICING_FETCHING':     return {...s, pricingFetching:a.payload};
@@ -721,6 +723,8 @@ async function loadAllData(dispatch) {
     try { await dbLoadAdAnalyses(dispatch); } catch(ae) { console.warn('[AdAnalyses] load failed:', ae); }
     // Load marketing alerts (declining ad performance)
     try { await dbLoadMarketingAlerts(dispatch); } catch(ma) { console.warn('[MarketingAlerts] load failed:', ma); }
+    // Load prospecting-agent output (admin only): outreach drafts + enrichment
+    try { if (_role === 'admin') await dbLoadOutreach(dispatch); } catch(oe) { console.warn('[Outreach] load failed:', oe); }
   } catch(e) {
     console.error('Data load error:', e);
   } finally {
@@ -754,6 +758,23 @@ async function dbSaveVoiceTone(dispatch, text) {
   await sb.from('app_settings').upsert([
     { key:'voice_tone_instructions', value: text },
   ], { onConflict:'key' });
+}
+// Prospecting agent output (admin, read-only). Loads outreach drafts + the
+// shared enrichment pool, plus establishment names/cities from the licenses
+// master for the referenced licence numbers. Never mutates these tables.
+async function dbLoadOutreach(dispatch) {
+  const [{ data: om }, { data: en }] = await Promise.all([
+    sb.from('outreach_messages').select('*').order('drafted_at', { ascending: false }),
+    sb.from('license_enrichment').select('*').order('updated_at', { ascending: false }),
+  ]);
+  const nums = [...new Set([...(om||[]).map(r=>r.licence_number), ...(en||[]).map(r=>r.licence_number)].filter(Boolean))];
+  const licenceInfo = {};
+  if (nums.length) {
+    const { data: lic } = await sb.from('licenses')
+      .select('licence_number,establishment,city,region,address,licensee').in('licence_number', nums);
+    (lic||[]).forEach(l => { licenceInfo[l.licence_number] = l; });
+  }
+  dispatch({ type:'SET_OUTREACH', payload:{ outreach: om||[], enrichment: en||[], licenceInfo } });
 }
 async function dbSaveAccountingSettings(dispatch, email, ccOnSend) {
   const e = (email || '').trim();
@@ -2714,9 +2735,9 @@ const NAV_CFG = {
     {s:'Sales',   items:[{v:'orders',n:'orders',l:'Orders'},{v:'trade-leads',n:'accounts',l:'Trade Leads'},{v:'menu-placements',n:'menu',l:'Menu Placements'},{v:'retail-pricing',n:'tag',l:'Retail Pricing'}]},
     {s:'Field',   items:[{v:'tastings',n:'tastings',l:'Tastings'},{v:'calendar',n:'calendar',l:'Calendar'},{v:'sampling-request',n:'mail',l:'Sampling'}]},
     {s:'Marketing',items:[{v:'cluster-ads',n:'ad',l:'Ad Planner'},{v:'media-desk',n:'ad',l:'Media Desk'},{v:'weather-ads',n:'ad',l:'Weather Ads'},{v:'ad-creatives',n:'upload',l:'Creatives'},{v:'ad-performance',n:'reports',l:'Ad Performance'},{v:'social',n:'globe',l:'Social'},{v:'email-analytics',n:'mail',l:'Email'}]},
-    {s:'Insights',items:[{v:'reports',n:'reports',l:'Reports'},{v:'map',n:'map',l:'Account Map'},{v:'web-analytics',n:'globe',l:'Website'}]},
+    {s:'Insights',items:[{v:'reports',n:'reports',l:'Reports'},{v:'volume-report',n:'reports',l:'Volume Report'},{v:'map',n:'map',l:'Account Map'},{v:'web-analytics',n:'globe',l:'Website'}]},
     {s:'Promo Materials',items:[{v:'promo-orders-admin',n:'orders',l:'Orders'},{v:'manage-promo',n:'products',l:'Materials'},{v:'manage-promo-categories',n:'tag',l:'Categories'},{v:'promo-reporting',n:'reports',l:'Reporting'}]},
-    {s:'Setup',   items:[{v:'products',n:'products',l:'Products'},{v:'stores',n:'stores',l:'Stores'},{v:'targets',n:'targets',l:'Targets'},{v:'sales-import',n:'download',l:'Sales Import'},{v:'users',n:'settings',l:'Team'},{v:'regions',n:'pin',l:'Regions'},{v:'licenses-admin',n:'accounts',l:'BC Licences'},{v:'dashboard-email',n:'mail',l:'Email Snapshot'},{v:'licence-prospects',n:'accounts',l:'Prospects'}]},
+    {s:'Setup',   items:[{v:'products',n:'products',l:'Products'},{v:'stores',n:'stores',l:'Stores'},{v:'targets',n:'targets',l:'Targets'},{v:'sales-import',n:'download',l:'Sales Import'},{v:'users',n:'settings',l:'Team'},{v:'regions',n:'pin',l:'Regions'},{v:'licenses-admin',n:'accounts',l:'BC Licences'},{v:'dashboard-email',n:'mail',l:'Email Snapshot'},{v:'licence-prospects',n:'accounts',l:'Prospects'},{v:'outreach',n:'mail',l:'Outreach'}]},
   ],
   rep:[
     {s:'Main',    items:[{v:'dashboard',n:'dashboard',l:'Dashboard'},{v:'accounts',n:'accounts',l:'Accounts'},{v:'visits',n:'visits',l:'Visits'},{v:'tasks',n:'tasks',l:'Tasks'},{v:'licence-prospects',n:'accounts',l:'Prospects'}]},
@@ -14100,9 +14121,7 @@ function GeocoderCard() {
 }
 
 // ── Licence Prospects (Rep + Admin) ──────────────────────────────────────────
-// Renamed: now rendered as the "Browse" tab by LicenseProspectsView
-// (see suenos-crm-prospecting.js).
-function LicenseProspectsBrowse() {
+function LicenseProspectsView() {
   const { state, dispatch } = useApp();
   const { accounts, users, licenseDismissals } = state;
   const user = state.user;
@@ -19517,370 +19536,170 @@ function VolumeReportView() {
   );
 }
 
-// PROSPECTING: Coverage · Match review · Outreach
-// Panels mounted as tabs inside LicenseProspectsView.
-// Backed by v_coverage_by_region, licence_match_review, license_enrichment
-// and outreach_messages.
+// suenos-crm-outreach.js — Prospecting Outreach (admin, read-only)
+// Surfaces what the prospecting agent writes: outreach_messages (drafts per
+// campaign) + license_enrichment (found websites/emails), joined to the licenses
+// master for establishment name/city. REVIEW ONLY — nothing is sent from here.
 
-// ─── COVERAGE ─────────────────────────────────────────────────────────────────
-function ProspectCoveragePanel() {
-  const { dispatch } = useApp();
-  const [rows, setRows]       = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => { (async () => {
-    try {
-      const { data, error } = await sb.from('v_coverage_by_region').select('*');
-      if (error) throw error;
-      setRows((data || []).sort((a,b) =>
-        b.total_licences - a.total_licences || (a.region||'').localeCompare(b.region||'')));
-    } catch(e) { showToast(dispatch, 'Coverage failed: '+e.message, 'error'); }
-    finally { setLoading(false); }
-  })(); }, []);
-
-  const totals = useMemo(() => rows.reduce((acc, r) => ({
-    licences: acc.licences + (r.total_licences||0),
-    held:     acc.held + (r.held||0),
-  }), {licences:0, held:0}), [rows]);
-
-  if (loading) return <Card cls="p-6 text-center text-xs text-gray-400">Loading coverage…</Card>;
-
-  const pct = totals.licences ? (100*totals.held/totals.licences) : 0;
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {[
-          ['Targetable', totals.licences.toLocaleString('en-CA')],
-          ['Held', totals.held.toLocaleString('en-CA')],
-          ['Whitespace', (totals.licences-totals.held).toLocaleString('en-CA')],
-          ['Penetration', pct.toFixed(1)+'%'],
-        ].map(([label, val]) => (
-          <Card key={label} cls="p-3">
-            <div className="text-lg font-bold text-gray-900 dark:text-white">{val}</div>
-            <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
-          </Card>
-        ))}
-      </div>
-
-      <Card cls="p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead className="bg-gray-50 dark:bg-gray-800">
-              <tr className="text-left text-gray-500 dark:text-gray-400">
-                <th className="px-3 py-2 font-medium">Region</th>
-                <th className="px-3 py-2 font-medium">Type</th>
-                <th className="px-3 py-2 font-medium text-right">Licences</th>
-                <th className="px-3 py-2 font-medium text-right">Held</th>
-                <th className="px-3 py-2 font-medium w-40">Penetration</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r,i) => (
-                <tr key={i} className="border-t border-gray-100 dark:border-gray-800">
-                  <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{r.region}</td>
-                  <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{r.crm_type}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-300">{(r.total_licences||0).toLocaleString('en-CA')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-300">{r.held||0}</td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                        <div className="h-full bg-violet-500" style={{width: Math.min(100, (r.pct_held||0)*4)+'%'}} />
-                      </div>
-                      <span className="tabular-nums text-gray-500 w-10 text-right">{(r.pct_held ?? 0)}%</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-      <p className="text-[10px] text-gray-400">Bar scaled to 25% for readability — penetration is low across the board.</p>
-    </div>
-  );
-}
-
-// ─── MATCH REVIEW ─────────────────────────────────────────────────────────────
-function ProspectMatchPanel() {
-  const { dispatch, state } = useApp();
-  const [rows, setRows]       = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId]   = useState(null);
-
-  async function load() {
-    setLoading(true);
-    try {
-      const { data, error } = await sb.from('licence_match_review')
-        .select('id,account_id,licence_number,name_score,total_score,distance_m,accounts(name),licenses(establishment,city,licence_type)')
-        .eq('status','pending').eq('confidence','review').eq('rank',1)
-        .order('total_score', { ascending:false });
-      if (error) throw error;
-      setRows(data || []);
-    } catch(e) { showToast(dispatch, 'Match review failed: '+e.message, 'error'); }
-    finally { setLoading(false); }
-  }
-  useEffect(() => { load(); }, []);
-
-  async function decide(row, accept) {
-    setBusyId(row.id);
-    try {
-      if (accept) {
-        const { error } = await sb.from('accounts')
-          .update({ license_number: row.licence_number, updated_at: new Date().toISOString() })
-          .eq('id', row.account_id);
-        if (error) throw error;
-      }
-      const { error: e2 } = await sb.from('licence_match_review').update({
-        status: accept ? 'applied' : 'rejected',
-        decided_by: state.user?.id ?? null,
-        decided_at: new Date().toISOString(),
-      }).eq('id', row.id);
-      if (e2) throw e2;
-      setRows(prev => prev.filter(r => r.id !== row.id));
-      showToast(dispatch, accept ? 'Linked to licence' : 'Rejected', 'success');
-    } catch(e) { showToast(dispatch, 'Failed: '+e.message, 'error'); }
-    finally { setBusyId(null); }
-  }
-
-  const clean = (s) => (s||'').replace(/\(\s*\d+\s*\)/, '').trim();
-
-  if (loading) return <Card cls="p-6 text-center text-xs text-gray-400">Loading matches…</Card>;
-  if (!rows.length) return (
-    <Card cls="p-8 text-center">
-      <div className="text-2xl mb-2">✓</div>
-      <p className="text-xs text-gray-500 dark:text-gray-400">No matches pending review.</p>
-    </Card>
-  );
-
-  return (
-    <div className="space-y-2">
-      <p className="text-[11px] text-gray-500 dark:text-gray-400">
-        Accounts that look like a BC licence but couldn't be confirmed automatically — usually
-        because the account has no postal code. Accepting writes the licence number onto the account,
-        which is what keeps it out of the prospect list.
-      </p>
-      {rows.map(r => (
-        <Card key={r.id} cls="p-3">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold text-gray-900 dark:text-white truncate">{r.accounts?.name}</div>
-              <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                ↔ {clean(r.licenses?.establishment)}
-                {r.licenses?.city && <span className="text-gray-400"> · {r.licenses.city}</span>}
-              </div>
-              <div className="text-[10px] text-gray-400 mt-1">
-                licence {r.licence_number} · score {Number(r.total_score).toFixed(2)}
-                {r.distance_m != null && <> · {r.distance_m < 1000 ? Math.round(r.distance_m)+' m' : (r.distance_m/1000).toFixed(1)+' km'} apart</>}
-              </div>
-            </div>
-            <div className="flex gap-1.5 shrink-0">
-              <button disabled={busyId===r.id} onClick={()=>decide(r, true)}
-                className="text-[11px] px-3 py-1.5 rounded-lg bg-violet-600 text-white font-medium hover:opacity-90 disabled:opacity-40">
-                Accept
-              </button>
-              <button disabled={busyId===r.id} onClick={()=>decide(r, false)}
-                className="text-[11px] px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40">
-                Reject
-              </button>
-            </div>
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-// Copy helper — the drafts live in the CRM until Graph write permission lands,
-// so reading and copying them here is the whole workflow in the meantime.
-function copyDraft(m, dispatch) {
-  const text = [m.draft_subject ? 'Subject: ' + m.draft_subject : '', '', m.draft_body || ''].join('\n');
-  const done = () => showToast(dispatch, 'Draft copied', 'success');
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done, dispatch));
-  } else {
-    fallbackCopy(text, done, dispatch);
-  }
-}
-function fallbackCopy(text, done, dispatch) {
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    done();
-  } catch (e) { showToast(dispatch, 'Copy failed — select the text manually', 'error'); }
-}
-
-// ─── OUTREACH ─────────────────────────────────────────────────────────────────
-function ProspectOutreachPanel() {
-  const { dispatch } = useApp();
-  const [msgs, setMsgs]       = useState([]);
-  const [stats, setStats]     = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [openId, setOpenId]   = useState(null);
-
-  useEffect(() => { (async () => {
-    try {
-      const [{ data: m, error: e1 }, { data: enr, error: e2 }] = await Promise.all([
-        sb.from('outreach_messages')
-          .select('id,email,status,queued_at,sent_at,consent_evidence,draft_subject,draft_body,drafted_at,mailbox_error,licenses(establishment,city)')
-          .order('queued_at', { ascending:false }).limit(100),
-        sb.from('license_enrichment').select('status'),
-      ]);
-      if (e1) throw e1;
-      if (e2) throw e2;
-      setMsgs(m || []);
-      const counts = {};
-      (enr || []).forEach(r => { counts[r.status] = (counts[r.status]||0) + 1; });
-      setStats(counts);
-    } catch(e) { showToast(dispatch, 'Outreach failed: '+e.message, 'error'); }
-    finally { setLoading(false); }
-  })(); }, []);
-
-  const clean = (s) => (s||'').replace(/\(\s*\d+\s*\)/, '').trim();
-  const STATUS_CLS = {
-    queued:'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
-    sent:'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400',
-    replied:'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400',
-    unsubscribed:'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400',
-    bounced:'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400',
-  };
-
-  if (loading) return <Card cls="p-6 text-center text-xs text-gray-400">Loading outreach…</Card>;
-
-  return (
-    <div className="space-y-3">
-      {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-          {[['enriched','Contacts found'],['no_email','No email'],['no_website','No site'],
-            ['blocked','Opted out'],['failed','Failed']].map(([k,label]) => (
-            <Card key={k} cls="p-2.5">
-              <div className="text-base font-bold text-gray-900 dark:text-white">{stats[k] || 0}</div>
-              <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
-            </Card>
-          ))}
-        </div>
-      )}
-      <p className="text-[10px] text-gray-400">
-        “Opted out” means the site published a no-unsolicited-email notice. Those are permanently
-        excluded — that's the rule working, not a failure.
-      </p>
-
-      {!msgs.length ? (
-        <Card cls="p-8 text-center text-xs text-gray-500 dark:text-gray-400">
-          Nothing queued yet. The daily task drafts into the sales mailbox.
-        </Card>
-      ) : msgs.map(m => {
-        const ev = m.consent_evidence || {};
-        const open = openId === m.id;
-        return (
-          <Card key={m.id} cls="p-3">
-            <div className="flex items-start justify-between gap-3 flex-wrap">
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-semibold text-gray-900 dark:text-white truncate">{clean(m.licenses?.establishment)}</div>
-                <div className="text-[11px] text-gray-500 dark:text-gray-400">{m.email}</div>
-                <div className="text-[10px] text-gray-400 mt-0.5">
-                  {m.licenses?.city} · queued {new Date(m.queued_at).toLocaleDateString('en-CA')}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_CLS[m.status] || STATUS_CLS.queued}`}>{m.status}</span>
-                <button onClick={()=>setOpenId(open ? null : m.id)}
-                  className="text-[10px] text-gray-400 hover:text-gray-600 underline">
-                  {open ? 'hide' : 'consent'}
-                </button>
-              </div>
-            </div>
-            {open && (
-              <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800 text-[10px] text-gray-500 dark:text-gray-400 space-y-2">
-                {m.draft_body ? (
-                  <div>
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <span className="text-[11px] font-semibold text-gray-700 dark:text-gray-200">
-                        {m.draft_subject || '(no subject)'}
-                      </span>
-                      <button onClick={()=>copyDraft(m, dispatch)}
-                        className="text-[10px] px-2 py-1 rounded-lg bg-violet-600 text-white font-medium hover:opacity-90 shrink-0">
-                        Copy draft
-                      </button>
-                    </div>
-                    <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 rounded p-2 max-h-72 overflow-y-auto">{m.draft_body}</pre>
-                  </div>
-                ) : (
-                  <div className="italic text-gray-400">No draft written yet.</div>
-                )}
-                {m.mailbox_error && (
-                  <div className="text-amber-700 dark:text-amber-400">
-                    Not pushed to the mailbox: {m.mailbox_error}
-                  </div>
-                )}
-                <div className="pt-1 border-t border-gray-100 dark:border-gray-800" />
-                <div><span className="text-gray-400">Basis:</span> {ev.basis || '—'}</div>
-                <div>
-                  <span className="text-gray-400">Published at:</span>{' '}
-                  {ev.source_url
-                    ? <a href={ev.source_url} target="_blank" rel="noopener noreferrer" className="text-violet-600 dark:text-violet-400 underline break-all">{ev.source_url}</a>
-                    : '—'}
-                </div>
-                {ev.captured_at && <div><span className="text-gray-400">Captured:</span> {new Date(ev.captured_at).toLocaleDateString('en-CA')}</div>}
-                {ev.snippet && <div className="italic bg-gray-50 dark:bg-gray-800 rounded p-2 mt-1">“{String(ev.snippet).slice(0,240)}…”</div>}
-              </div>
-            )}
-          </Card>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── WRAPPER ──────────────────────────────────────────────────────────────────
-// Tabs over the existing browse view (LicenseProspectsBrowse, in p4b).
-// Coverage / Match review / Outreach are admin-only: they span the whole
-// province and can rewrite account records.
-function LicenseProspectsView() {
+function OutreachView() {
   const { state } = useApp();
-  const isAdmin = state.user?.role === 'admin';
-  const [ptab, setPtab] = useState('browse');
+  const outreach   = state.outreach   || [];
+  const enrichment = state.enrichment || [];
+  const licInfo    = state.licenceInfo || {};
+  const infoFor = ln => licInfo[ln] || {};
 
-  const TABS = [
-    { k:'browse',   l:'Browse',       admin:false },
-    { k:'coverage', l:'Coverage',     admin:true  },
-    { k:'matches',  l:'Match review', admin:true  },
-    { k:'outreach', l:'Outreach',     admin:true  },
-  ].filter(t => !t.admin || isAdmin);
+  const campaigns = React.useMemo(() =>
+    [...new Set(outreach.map(o => o.campaign_id).filter(Boolean))].sort(), [outreach]);
+  const [campaign, setCampaign] = React.useState('');
+  React.useEffect(() => { if (!campaign && campaigns.length) setCampaign(campaigns[0]); }, [campaigns]);
+  const [tab, setTab] = React.useState('drafts');   // drafts | enrichment
+  const [open, setOpen] = React.useState({});       // expanded draft bodies
 
-  if (TABS.length === 1) return <LicenseProspectsBrowse />;
+  const msgs = React.useMemo(() =>
+    outreach.filter(o => o.campaign_id === campaign), [outreach, campaign]);
+
+  const statusMeta = {
+    queued:  ['Queued',  'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'],
+    sent:    ['Sent',    'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'],
+    replied: ['Replied', 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'],
+    opened:  ['Opened',  'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'],
+    skipped: ['Skipped', 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'],
+    error:   ['Error',   'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'],
+  };
+  const badge = s => { const [l,c] = statusMeta[s] || [s||'—','bg-gray-100 text-gray-500'];
+    return <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${c}`}>{l}</span>; };
+
+  const cnt = st => msgs.filter(m => m.status === st).length;
+  const drafted = msgs.filter(m => m.draft_body).length;
+  const emailsFound = enrichment.filter(e => e.email).length;
+  const conf = v => v == null ? '—' : `${Math.round(Number(v)*100)}%`;
+  const fmtDT = d => d ? new Date(d).toLocaleString('en-CA',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+
+  const kpi = (n,l) => (
+    <div className="rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 p-3 text-center">
+      <div className="text-xl font-bold text-teal-700 dark:text-teal-400">{n}</div>
+      <div className="text-[10px] uppercase tracking-wide text-gray-400 mt-0.5">{l}</div>
+    </div>);
+  const tabBtn = (id,label,count) => (
+    <button onClick={()=>setTab(id)}
+      className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${tab===id?'bg-teal-600 text-white':'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
+      {label}<span className="ml-1.5 text-xs opacity-70">{count}</span></button>);
+  const inputCls = "px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500";
 
   return (
-    <div>
-      <div className="px-4 sm:px-6 pt-4 max-w-5xl mx-auto">
-        <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
-          {TABS.map(t => (
-            <button key={t.k} onClick={()=>setPtab(t.k)}
-              className={`px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 -mb-px transition ${
-                ptab===t.k
-                  ? 'border-violet-600 text-violet-700 dark:text-violet-400'
-                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>
-              {t.l}
-            </button>
-          ))}
-        </div>
+    <div className="max-w-5xl mx-auto p-4 sm:p-6 pb-24">
+      <div className="mb-1">
+        <h1 className="text-xl font-bold text-gray-900 dark:text-white">Prospecting Outreach</h1>
+        <p className="text-xs text-gray-500 mt-0.5">Drafts and enrichment produced by the prospecting agent. Review only — no messages are sent from this screen.</p>
       </div>
 
-      {ptab === 'browse'
-        ? <LicenseProspectsBrowse />
-        : (
-          <div className="p-4 sm:p-6 max-w-5xl mx-auto pb-24">
-            {ptab === 'coverage' && <ProspectCoveragePanel />}
-            {ptab === 'matches'  && <ProspectMatchPanel />}
-            {ptab === 'outreach' && <ProspectOutreachPanel />}
+      {campaigns.length === 0 ? (
+        <div className="text-center text-sm text-gray-500 py-16 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 mt-4">
+          No outreach campaigns found yet.
+        </div>
+      ) : (<>
+        <div className="flex flex-wrap items-center gap-3 my-4">
+          <div>
+            <label className="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Campaign</label>
+            <select value={campaign} onChange={e=>setCampaign(e.target.value)} className={inputCls}>
+              {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 mb-4">
+          {kpi(msgs.length,'Messages')}
+          {kpi(drafted,'Drafts')}
+          {kpi(cnt('queued'),'Queued')}
+          {kpi(cnt('sent')+cnt('replied'),'Sent')}
+          {kpi(emailsFound,'Emails Found')}
+        </div>
+
+        <div className="flex gap-1.5 mb-4">
+          {tabBtn('drafts','Outreach drafts', msgs.length)}
+          {tabBtn('enrichment','Enrichment', enrichment.length)}
+        </div>
+
+        {tab === 'drafts' && (
+          <div className="space-y-2.5">
+            {msgs.length === 0 && <p className="text-sm text-gray-500 py-8 text-center">No messages in this campaign.</p>}
+            {msgs.map(m => {
+              const info = infoFor(m.licence_number);
+              const isOpen = open[m.id];
+              return (
+                <div key={m.id} className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden">
+                  <div className="flex items-start justify-between gap-3 p-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-gray-900 dark:text-white truncate">{info.establishment || `Licence ${m.licence_number}`}</p>
+                        {badge(m.status)}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {[info.city, info.region].filter(Boolean).join(', ') || '—'} · Licence {m.licence_number}
+                      </p>
+                      <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                        <Ic n="mail" cls="w-3 h-3 inline mr-1 -mt-0.5"/>{m.email || <span className="text-gray-400">no email</span>}
+                      </p>
+                    </div>
+                    <button onClick={()=>setOpen(o=>({...o,[m.id]:!o[m.id]}))}
+                      className="flex-shrink-0 text-xs font-medium text-teal-600 hover:text-teal-700 whitespace-nowrap">
+                      {isOpen ? 'Hide draft' : 'View draft'}
+                    </button>
+                  </div>
+                  {isOpen && (
+                    <div className="border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 p-4 space-y-2">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase text-gray-400">Subject</p>
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">{m.draft_subject || <span className="text-gray-400">—</span>}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase text-gray-400">Body</p>
+                        <pre className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-sans leading-relaxed">{m.draft_body || '—'}</pre>
+                      </div>
+                      <div className="flex flex-wrap gap-x-6 gap-y-1 pt-1 text-[11px] text-gray-500">
+                        <span><b className="text-gray-400">Consent:</b> {(m.consent_basis||'—').replace(/_/g,' ')}</span>
+                        <span><b className="text-gray-400">Drafted:</b> {fmtDT(m.drafted_at)}</span>
+                        {m.sent_at && <span><b className="text-gray-400">Sent:</b> {fmtDT(m.sent_at)}</span>}
+                        {m.replied_at && <span><b className="text-gray-400">Replied:</b> {fmtDT(m.replied_at)}</span>}
+                        {m.skip_reason && <span className="text-amber-600"><b>Skipped:</b> {m.skip_reason}</span>}
+                        {m.mailbox_error && <span className="text-red-600"><b>Error:</b> {m.mailbox_error}</span>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
+
+        {tab === 'enrichment' && (
+          <div className="rounded-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
+            <div className="px-4 py-2.5 bg-gray-50 dark:bg-gray-800/50 text-xs text-gray-500">
+              Enrichment is a shared pool keyed by licence number (not campaign-specific). {enrichment.length} licences · {emailsFound} with an email found.
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead><tr className="bg-teal-700 text-white">
+                  {['Establishment','City','Email','Conf.','Website','Status','Updated'].map((h,i)=>
+                    <th key={h} className={`text-[10px] font-bold uppercase tracking-wide px-3 py-2 ${i>=3&&i<=3?'text-right':'text-left'}`}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {enrichment.map((e,i)=>{ const info=infoFor(e.licence_number); return (
+                    <tr key={i} className="border-b border-gray-100 dark:border-gray-800">
+                      <td className="px-3 py-2 text-sm text-gray-800 dark:text-gray-200">{info.establishment || `Licence ${e.licence_number}`}</td>
+                      <td className="px-3 py-2 text-sm text-gray-500">{info.city || '—'}</td>
+                      <td className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{e.email || <span className="text-gray-400">—</span>}</td>
+                      <td className="px-3 py-2 text-sm text-right tabular-nums text-gray-600">{conf(e.email_confidence)}</td>
+                      <td className="px-3 py-2 text-sm">{e.website ? <a href={e.website} target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:underline">link</a> : <span className="text-gray-400">—</span>}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500">{e.status || '—'}</td>
+                      <td className="px-3 py-2 text-xs text-gray-400 whitespace-nowrap">{e.updated_at ? new Date(e.updated_at).toLocaleDateString('en-CA') : '—'}</td>
+                    </tr>);})}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </>)}
     </div>
   );
 }
@@ -19893,7 +19712,7 @@ function AppRouter() {
   const { view, params, user } = state;
 
   // Guard views by role — redirect instead of showing error
-  const adminOnly = ['products','stores','sales-import','targets','users','regions','retail-pricing','cluster-ads','media-desk','weather-ads','ad-creatives','licenses-admin','dashboard-email','manage-promo','manage-promo-categories','promo-orders-admin','promo-reporting','trade-leads','social','email-analytics','volume-report'];
+  const adminOnly = ['products','stores','sales-import','targets','users','regions','retail-pricing','cluster-ads','media-desk','weather-ads','ad-creatives','licenses-admin','dashboard-email','manage-promo','manage-promo-categories','promo-orders-admin','promo-reporting','trade-leads','social','email-analytics','volume-report','outreach'];
   if (adminOnly.includes(view) && user.role !== 'admin') {
     dispatch({ type:'NAV', view:'dashboard' });
     return null;
@@ -19921,6 +19740,7 @@ function AppRouter() {
     case 'stores':          return <StoresView />;
     case 'reports':         return <ReportsView />;
     case 'volume-report':   return <VolumeReportView />;
+    case 'outreach':        return <OutreachView />;
     case 'map':             return <MapView />;
     case 'users':           return <UsersView />;
     case 'targets':         return <TargetsView />;
@@ -19961,7 +19781,7 @@ const _VALID_HASH_VIEWS = ['accounts','visits','orders','tastings','calendar','m
   'account-detail',
   // In-progress entry forms — restorable on reload so a refresh returns the rep
   // to the form (their draft is auto-restored from localStorage) instead of the dashboard.
-  'new-account','new-visit','new-order','volume-report'];
+  'new-account','new-visit','new-order','volume-report','outreach'];
 
 // ── SET PASSWORD SCREEN (shown after clicking reset link) ──────
 function SetPasswordScreen({ onDone, forced = false, userId = null }) {

@@ -18,8 +18,7 @@ const ORDER_ADMIN_EMAIL            = 'jason@suenos.ca';
 const EDGE_FN_URL         = `${SUPABASE_URL}/functions/v1`;
 
 // ── Ad Creative Image Generator (Fal.ai + Canvas compositing) ────────────────
-// FAL key intentionally NOT in the browser bundle — image generation goes
-// through the generate-ad-image Edge Function, which holds the key as a secret.
+const FAL_API_KEY             = 'YOUR_FAL_API_KEY'; // fal.ai → Dashboard → Keys
 const GENERATE_IMAGE_FN       = 'generate-ad-image'; // Supabase Edge Function name
 const SUENOS_LOGO_URL         = 'YOUR_SUENOS_LOGO_URL'; // public URL to master Sueños logo PNG
 
@@ -215,6 +214,8 @@ const INITIAL_STATE = {
   bottleDeposit: 0,   // flat per-bottle container deposit (tax-exempt), applied to invoices
   accountingEmail: '',        // bookkeeping/accounting copy address for invoices (managed in Settings)
   accountingCcOnSend: true,   // auto-send a copy to accounting whenever an invoice is emailed
+  // Prospecting agent output (admin, read-only): outreach drafts + enrichment
+  outreach: [], enrichment: [], licenceInfo: {},
   // voice & tone brand guidelines (pasted text, stored in app_settings)
   voiceTone: '',
   // structured brand voice controls for the AI writer (stored in app_settings as JSON)
@@ -335,6 +336,7 @@ function reducer(s, a) {
     case 'SET_BOTTLE_DEPOSIT':      return {...s, bottleDeposit:a.payload};
     case 'SET_ACCOUNTING_EMAIL':    return {...s, accountingEmail:a.payload};
     case 'SET_ACCOUNTING_CC':       return {...s, accountingCcOnSend:a.payload};
+    case 'SET_OUTREACH':            return {...s, outreach:a.payload.outreach, enrichment:a.payload.enrichment, licenceInfo:a.payload.licenceInfo};
     case 'SET_VOICE_TONE':          return {...s, voiceTone:a.payload};
     case 'SET_VOICE_PROFILE':       return {...s, voiceProfile:a.payload};
     case 'PRICING_FETCHING':     return {...s, pricingFetching:a.payload};
@@ -476,6 +478,8 @@ async function loadAllData(dispatch) {
     try { await dbLoadAdAnalyses(dispatch); } catch(ae) { console.warn('[AdAnalyses] load failed:', ae); }
     // Load marketing alerts (declining ad performance)
     try { await dbLoadMarketingAlerts(dispatch); } catch(ma) { console.warn('[MarketingAlerts] load failed:', ma); }
+    // Load prospecting-agent output (admin only): outreach drafts + enrichment
+    try { if (_role === 'admin') await dbLoadOutreach(dispatch); } catch(oe) { console.warn('[Outreach] load failed:', oe); }
   } catch(e) {
     console.error('Data load error:', e);
   } finally {
@@ -509,6 +513,23 @@ async function dbSaveVoiceTone(dispatch, text) {
   await sb.from('app_settings').upsert([
     { key:'voice_tone_instructions', value: text },
   ], { onConflict:'key' });
+}
+// Prospecting agent output (admin, read-only). Loads outreach drafts + the
+// shared enrichment pool, plus establishment names/cities from the licenses
+// master for the referenced licence numbers. Never mutates these tables.
+async function dbLoadOutreach(dispatch) {
+  const [{ data: om }, { data: en }] = await Promise.all([
+    sb.from('outreach_messages').select('*').order('drafted_at', { ascending: false }),
+    sb.from('license_enrichment').select('*').order('updated_at', { ascending: false }),
+  ]);
+  const nums = [...new Set([...(om||[]).map(r=>r.licence_number), ...(en||[]).map(r=>r.licence_number)].filter(Boolean))];
+  const licenceInfo = {};
+  if (nums.length) {
+    const { data: lic } = await sb.from('licenses')
+      .select('licence_number,establishment,city,region,address,licensee').in('licence_number', nums);
+    (lic||[]).forEach(l => { licenceInfo[l.licence_number] = l; });
+  }
+  dispatch({ type:'SET_OUTREACH', payload:{ outreach: om||[], enrichment: en||[], licenceInfo } });
 }
 async function dbSaveAccountingSettings(dispatch, email, ccOnSend) {
   const e = (email || '').trim();

@@ -11,7 +11,7 @@ const _VALID_HASH_VIEWS = ['accounts','visits','orders','tastings','calendar','m
   'account-detail',
   // In-progress entry forms — restorable on reload so a refresh returns the rep
   // to the form (their draft is auto-restored from localStorage) instead of the dashboard.
-  'new-account','new-visit','new-order','volume-report'];
+  'new-account','new-visit','new-order','volume-report','outreach'];
 
 // ── SET PASSWORD SCREEN (shown after clicking reset link) ──────
 function SetPasswordScreen({ onDone, forced = false, userId = null }) {
