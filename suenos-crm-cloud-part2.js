@@ -93,6 +93,11 @@ function App() {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
   const [recoverySession, setRecoverySession] = React.useState(null);
 
+  // Mark the app as booted so the global boot-error handler stops wiping the
+  // whole page on stray/benign error events (the in-app error boundary handles
+  // real view errors from here on).
+  useEffect(() => { window.__RCRM_BOOTED = true; }, []);
+
   // Sync URL hash → view
   useEffect(() => {
     if (state.user && state.view) {
@@ -188,7 +193,7 @@ function App() {
                 : state.user?.mustChangePassword
                   ? <SetPasswordScreen forced userId={state.user.id}
                       onDone={() => dispatch({ type:'SET_USER', payload: { ...state.user, mustChangePassword: false } })}/>
-                  : <Layout><AppRouter /></Layout>
+                  : <Layout><ViewErrorBoundary key={state.view} onReset={()=>dispatch({type:'NAV',view:'dashboard'})}><AppRouter /></ViewErrorBoundary></Layout>
           }
           <Toast />
         </div>

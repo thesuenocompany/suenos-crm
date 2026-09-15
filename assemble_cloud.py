@@ -337,8 +337,14 @@ HEAD = '''<!DOCTYPE html>
 FOOT = '''
   </script>
   <script>
-    // Error reporter — shows any crash on-screen instead of blank page
+    // Boot-error reporter — shows a crash on-screen instead of a blank page,
+    // but ONLY before the React app has mounted. Once the app is running, a
+    // stray error event (often a benign cross-origin "Script error." with no
+    // file/line/stack, e.g. from a CDN asset) must NOT wipe the whole CRM —
+    // React's in-app error boundary handles real view errors with full detail.
+    function _rcrmBooted() { return !!window.__RCRM_BOOTED; }
     window.addEventListener('error', function(e) {
+      if (_rcrmBooted()) { try { console.error('[CRM error]', e.message, e.error && e.error.stack); } catch(_){} return; }
       var d = document.getElementById('root');
       d.innerHTML = '<div style="font-family:monospace;padding:24px;background:#1e1e2e;color:#f38ba8;min-height:100vh">'
         + '<h2 style="color:#cba6f7;margin-bottom:12px">CRM Error</h2>'
@@ -349,6 +355,7 @@ FOOT = '''
         + '</div>';
     });
     window.addEventListener('unhandledrejection', function(e) {
+      if (_rcrmBooted()) { try { console.error('[CRM async error]', e.reason); } catch(_){} return; }
       var d = document.getElementById('root');
       if (!d.innerHTML.includes('CRM Error')) {
         d.innerHTML = '<div style="font-family:monospace;padding:24px;background:#1e1e2e;color:#f38ba8;min-height:100vh">'

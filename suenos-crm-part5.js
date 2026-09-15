@@ -1,5 +1,32 @@
 // PART 5: App Router + Root Component
 
+// ─── VIEW ERROR BOUNDARY ──────────────────────────────────────────────────────
+// Catches a render error in one view and shows it (with the real message/stack)
+// instead of letting it bubble to window.onerror and blank the whole CRM. Keyed
+// by view in the shell so navigating away clears a broken screen.
+class ViewErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) { try { console.error('[View error]', err, info && info.componentStack); } catch(_) {} }
+  render() {
+    if (this.state.err) {
+      const e = this.state.err;
+      return (
+        <div className="p-6 max-w-2xl mx-auto">
+          <div className="rounded-2xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-5">
+            <p className="font-bold text-red-700 dark:text-red-400 mb-1">This screen hit an error</p>
+            <p className="text-sm text-red-600 dark:text-red-300 mb-3">The rest of the CRM is fine — head back to the dashboard, and send this message to support so it can be fixed.</p>
+            <pre className="text-[11px] bg-white dark:bg-gray-900 border border-red-100 dark:border-red-900/50 rounded-lg p-3 overflow-auto whitespace-pre-wrap text-gray-700 dark:text-gray-300 max-h-64">{String((e && (e.stack || e.message)) || e)}</pre>
+            <button onClick={()=>{ this.setState({ err:null }); if (this.props.onReset) this.props.onReset(); }}
+              className="mt-3 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold">Back to dashboard</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ─── APP ROUTER ───────────────────────────────────────────────────────────────
 function AppRouter() {
   const { state, dispatch } = useApp();
