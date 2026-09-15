@@ -197,6 +197,46 @@ function fallbackCopy(text, done, dispatch) {
   } catch (e) { showToast(dispatch, 'Copy failed — select the text manually', 'error'); }
 }
 
+/**
+ * Reject a contact the crawler got wrong — most often a host venue's general
+ * address (a ski hill, hotel, mall) rather than the liquor store's own.
+ * Clears the email so the licence cannot become eligible again on it, and marks
+ * the queued message skipped. The licence returns to the enrichment queue.
+ */
+async function rejectContact(m, reason, dispatch, onDone) {
+  try {
+    const { data: msg, error: e0 } = await sb.from('outreach_messages')
+      .select('licence_number, email_norm').eq('id', m.id).single();
+    if (e0) throw e0;
+
+    const { error: e1 } = await sb.from('license_enrichment').update({
+      status: 'no_email',
+      email: null, email_type: null, email_confidence: null,
+      email_source_url: null, email_source_snippet: null, email_found_at: null,
+      contact_name: null, contact_title: null,
+      last_error: 'rejected in CRM: ' + reason,
+      updated_at: new Date().toISOString(),
+    }).eq('licence_number', msg.licence_number);
+    if (e1) throw e1;
+
+    const { error: e2 } = await sb.from('outreach_messages').update({
+      status: 'skipped', skip_reason: reason,
+    }).eq('id', m.id);
+    if (e2) throw e2;
+
+    // A wrong or unwanted address must never be tried again, from any licence.
+    if (reason === 'wrong business' || reason === 'do not contact') {
+      await sb.from('outreach_suppressions')
+        .upsert({ email_norm: msg.email_norm, reason: 'manual',
+                  source: 'rejected in CRM: ' + reason },
+                { onConflict: 'email_norm', ignoreDuplicates: true });
+    }
+
+    showToast(dispatch, 'Contact rejected', 'success');
+    onDone();
+  } catch (e) { showToast(dispatch, 'Reject failed: ' + e.message, 'error'); }
+}
+
 // ─── OUTREACH ─────────────────────────────────────────────────────────────────
 function ProspectOutreachPanel() {
   const { dispatch } = useApp();
@@ -204,6 +244,9 @@ function ProspectOutreachPanel() {
   const [stats, setStats]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId]   = useState(null);
+  const [rejectId, setRejectId]   = useState(null);
+  const [busyId, setBusyId]       = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => { (async () => {
     try {
@@ -221,7 +264,7 @@ function ProspectOutreachPanel() {
       setStats(counts);
     } catch(e) { showToast(dispatch, 'Outreach failed: '+e.message, 'error'); }
     finally { setLoading(false); }
-  })(); }, []);
+  })(); }, [reloadKey]);
 
   const clean = (s) => (s||'').replace(/\(\s*\d+\s*\)/, '').trim();
   const STATUS_CLS = {
@@ -275,8 +318,38 @@ function ProspectOutreachPanel() {
                   className="text-[10px] text-gray-400 hover:text-gray-600 underline">
                   {open ? 'hide' : 'consent'}
                 </button>
+                {m.status === 'queued' && (
+                  <button onClick={()=>setRejectId(rejectId === m.id ? null : m.id)}
+                    className="text-[10px] text-red-600 hover:text-red-700 underline">
+                    reject
+                  </button>
+                )}
               </div>
             </div>
+            {rejectId === m.id && (
+              <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+                <div className="text-[10px] text-gray-500 dark:text-gray-400 mb-1.5">
+                  Why is this contact wrong? The licence goes back in the enrichment queue.
+                </div>
+                <div className="flex gap-1.5 flex-wrap">
+                  {[
+                    ['wrong business', 'Belongs to a host venue or another business'],
+                    ['not the buyer',  'Right business, wrong department'],
+                    ['closed',         'Business appears closed'],
+                    ['do not contact', 'Never approach this one'],
+                  ].map(([key, hint]) => (
+                    <button key={key} title={hint} disabled={busyId === m.id}
+                      onClick={()=>{ setBusyId(m.id);
+                        rejectContact(m, key, dispatch, ()=>{ setBusyId(null); setRejectId(null); setReloadKey(k=>k+1); }); }}
+                      className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-red-400 hover:text-red-600 disabled:opacity-40">
+                      {key}
+                    </button>
+                  ))}
+                  <button onClick={()=>setRejectId(null)}
+                    className="text-[10px] px-2 py-1 text-gray-400 hover:text-gray-600">cancel</button>
+                </div>
+              </div>
+            )}
             {open && (
               <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800 text-[10px] text-gray-500 dark:text-gray-400 space-y-2">
                 {m.draft_body ? (
