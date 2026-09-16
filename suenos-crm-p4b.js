@@ -6790,8 +6790,9 @@ function LicenseProspectsView() {
   const [page, setPage]             = useState(0);
   const [hasMore, setHasMore]       = useState(true);
   const [search, setSearch]         = useState('');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [regionFilter, setRegionFilter] = useState('');
+  const [typeSel, setTypeSel]       = useState([]);   // [] = all types
+  const [regionSel, setRegionSel]   = useState([]);   // [] = all regions
+  const [openFilter, setOpenFilter] = useState(null); // 'type' | 'region' | null
   const [cityFilter, setCityFilter] = useState('');
   const [dismissingId, setDismissingId] = useState(null);
   const [assigningLic, setAssigningLic] = useState(null); // licence being assigned
@@ -6837,8 +6838,8 @@ function LicenseProspectsView() {
       // Always exclude types with no useful establishment data
       q = q.not('licence_type', 'in', '("Agent","UBrew and UVin")');
       if (!isAdmin && myRegions?.length) q = q.in('region', myRegions);
-      if (regionFilter) q = q.eq('region', regionFilter);
-      if (typeFilter !== 'all') q = q.eq('licence_type', typeFilter);
+      if (regionSel.length) q = q.in('region', regionSel);
+      if (typeSel.length)   q = q.in('licence_type', typeSel);
       if (cityFilter.trim()) q = q.ilike('city', `%${cityFilter.trim()}%`);
       if (search.trim()) q = q.ilike('establishment', `%${search.trim()}%`);
       q = q.range(offset, offset + PAGE_SIZE - 1);
@@ -6852,7 +6853,7 @@ function LicenseProspectsView() {
     finally { setLoading(false); }
   }
 
-  useEffect(()=>{ setPage(0); setHasMore(true); loadPage(true); }, [typeFilter, regionFilter, cityFilter]);
+  useEffect(()=>{ setPage(0); setHasMore(true); loadPage(true); }, [typeSel, regionSel, cityFilter]);
 
   function handleSearch(e) {
     if (e.key==='Enter') { setPage(0); setHasMore(true); loadPage(true); }
@@ -7020,8 +7021,8 @@ function LicenseProspectsView() {
     let q = sb.from('licenses').select('*').order('city').order('establishment')
       .not('licence_type', 'in', '("Agent","UBrew and UVin")');
     if (!isAdmin && myRegions?.length) q = q.in('region', myRegions);
-    if (regionFilter)      q = q.eq('region', regionFilter);
-    if (typeFilter!=='all') q = q.eq('licence_type', typeFilter);
+    if (regionSel.length) q = q.in('region', regionSel);
+    if (typeSel.length)   q = q.in('licence_type', typeSel);
     if (cityFilter.trim()) q = q.ilike('city', `%${cityFilter.trim()}%`);
     if (search.trim())     q = q.ilike('establishment', `%${search.trim()}%`);
     const { data, error } = await q.limit(5000);
@@ -7043,8 +7044,8 @@ function LicenseProspectsView() {
   const filterSummary = () => [
     search.trim() && `name ~ "${search.trim()}"`,
     cityFilter.trim() && `city ~ "${cityFilter.trim()}"`,
-    typeFilter!=='all' && typeFilter,
-    regionFilter || (isAdmin ? 'All regions' : 'My regions'),
+    typeSel.length ? typeSel.join(', ') : 'All types',
+    regionSel.length ? regionSel.join(', ') : (isAdmin ? 'All regions' : 'My regions'),
   ].filter(Boolean).join('  ·  ');
 
   async function exportCSV() {
@@ -7156,16 +7157,45 @@ td{border:1px solid #e5e0f0;padding:4px 7px;font-size:9px}tr:nth-child(even) td{
         <input value={cityFilter} onChange={e=>setCityFilter(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter'){ setPage(0); setHasMore(true); loadPage(true); }}}
           placeholder="City…"
           className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 w-32"/>
-        <select value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}
-          className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">
-          {TYPES.map(t=><option key={t} value={t}>{t==='all'?'All Types':t}</option>)}
-        </select>
+        {/* Type — multi-select */}
+        <div className="relative">
+          <button type="button" onClick={()=>setOpenFilter(o=>o==='type'?null:'type')}
+            className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 hover:border-teal-400 flex items-center gap-1 whitespace-nowrap">
+            {typeSel.length ? `Types (${typeSel.length})` : 'All Types'}<span className="text-gray-400">▾</span>
+          </button>
+          {openFilter==='type' && (<>
+            <div className="fixed inset-0 z-10" onClick={()=>setOpenFilter(null)}/>
+            <div className="absolute left-0 z-20 mt-1 w-56 max-h-64 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg p-1">
+              <button onClick={()=>setTypeSel([])} className="w-full text-left text-[11px] px-2 py-1 text-gray-400 hover:text-gray-600">Clear (all types)</button>
+              {TYPES.filter(t=>t!=='all').map(t=>(
+                <label key={t} className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
+                  <input type="checkbox" checked={typeSel.includes(t)} onChange={()=>setTypeSel(s=>s.includes(t)?s.filter(x=>x!==t):[...s,t])} className="w-3.5 h-3.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500"/>
+                  {t}
+                </label>
+              ))}
+            </div>
+          </>)}
+        </div>
+        {/* Region — multi-select (admin) */}
         {isAdmin && (
-          <select value={regionFilter} onChange={e=>setRegionFilter(e.target.value)}
-            className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">
-            <option value="">All Regions</option>
-            {regionNames.map(r=><option key={r} value={r}>{r}</option>)}
-          </select>
+          <div className="relative">
+            <button type="button" onClick={()=>setOpenFilter(o=>o==='region'?null:'region')}
+              className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 hover:border-teal-400 flex items-center gap-1 whitespace-nowrap">
+              {regionSel.length ? `Regions (${regionSel.length})` : 'All Regions'}<span className="text-gray-400">▾</span>
+            </button>
+            {openFilter==='region' && (<>
+              <div className="fixed inset-0 z-10" onClick={()=>setOpenFilter(null)}/>
+              <div className="absolute left-0 z-20 mt-1 w-56 max-h-64 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg p-1">
+                <button onClick={()=>setRegionSel([])} className="w-full text-left text-[11px] px-2 py-1 text-gray-400 hover:text-gray-600">Clear (all regions)</button>
+                {regionNames.map(r=>(
+                  <label key={r} className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
+                    <input type="checkbox" checked={regionSel.includes(r)} onChange={()=>setRegionSel(s=>s.includes(r)?s.filter(x=>x!==r):[...s,r])} className="w-3.5 h-3.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500"/>
+                    {r}
+                  </label>
+                ))}
+              </div>
+            </>)}
+          </div>
         )}
         <button onClick={()=>{ setPage(0); setHasMore(true); loadPage(true); }} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">
           🔍 Search
