@@ -14142,6 +14142,15 @@ function LicenseProspectsView() {
   const [assigning, setAssigning]       = useState(false);
   const PAGE_SIZE = 50;
 
+  // Export (filtered list → CSV / PDF) with a column picker
+  const [showExport, setShowExport] = useState(false);
+  const [exporting, setExporting]   = useState(false);
+  const [exportCols, setExportCols] = useState({
+    establishment:true, licensee:false, address:true, city:true, postal_code:false,
+    region:true, licence_type:true, licence_number:true, expiry_date:true,
+    phone:true, email:false, website:false,
+  });
+
   // Rep's regions
   const myRegions = isAdmin ? null : (user?.regions || []);
 
@@ -14329,6 +14338,105 @@ function LicenseProspectsView() {
     'UBrew and UVin':'bg-lime-50 text-lime-700 dark:bg-lime-900/20 dark:text-lime-400',
   };
 
+  // ── Export helpers ──────────────────────────────────────────────────────
+  const EXPORT_COLUMNS = [
+    { key:'establishment', label:'Name',         get:l=>l.establishment||l.licensee||'' },
+    { key:'licensee',      label:'Licensee',     get:l=>l.licensee||'' },
+    { key:'address',       label:'Address',      get:l=>l.address||'' },
+    { key:'city',          label:'City',         get:l=>l.city||'' },
+    { key:'postal_code',   label:'Postal Code',  get:l=>l.postal_code||'' },
+    { key:'region',        label:'Region',       get:l=>l.region||'' },
+    { key:'licence_type',  label:'Licence Type', get:l=>l.licence_type||'' },
+    { key:'licence_number',label:'Licence #',    get:l=>l.licence_number||'' },
+    { key:'expiry_date',   label:'Expiry',       get:l=>l.expiry_date||'' },
+    { key:'phone',         label:'Phone',        get:(l,e)=>e?.phone||'' },
+    { key:'email',         label:'Email',        get:(l,e)=>e?.email||'' },
+    { key:'website',       label:'Website',      get:(l,e)=>e?.website||'' },
+  ];
+  const selectedCols = () => EXPORT_COLUMNS.filter(c => exportCols[c.key]);
+
+  // Pull EVERY row matching the current filters (not just the loaded page),
+  // drop already-matched/dismissed, and attach agent enrichment (phone/email/
+  // website) where it exists.
+  async function fetchAllFiltered() {
+    let q = sb.from('licenses').select('*').order('city').order('establishment')
+      .not('licence_type', 'in', '("Agent","UBrew and UVin")');
+    if (!isAdmin && myRegions?.length) q = q.in('region', myRegions);
+    if (regionFilter)      q = q.eq('region', regionFilter);
+    if (typeFilter!=='all') q = q.eq('licence_type', typeFilter);
+    if (cityFilter.trim()) q = q.ilike('city', `%${cityFilter.trim()}%`);
+    if (search.trim())     q = q.ilike('establishment', `%${search.trim()}%`);
+    const { data, error } = await q.limit(5000);
+    if (error) throw error;
+    const rows = (data||[]).filter(l => !isMatched(l) && !dismissedSet.has(l.licence_number));
+    const enrByLic = {};
+    const needsEnr = ['phone','email','website'].some(k => exportCols[k]);
+    if (needsEnr) {
+      const nums = rows.map(r=>r.licence_number).filter(Boolean);
+      for (let i=0; i<nums.length; i+=200) {
+        const { data:en } = await sb.from('license_enrichment')
+          .select('licence_number,phone,email,website').in('licence_number', nums.slice(i,i+200));
+        (en||[]).forEach(e => { enrByLic[e.licence_number] = e; });
+      }
+    }
+    return { rows, enrByLic };
+  }
+
+  const filterSummary = () => [
+    search.trim() && `name ~ "${search.trim()}"`,
+    cityFilter.trim() && `city ~ "${cityFilter.trim()}"`,
+    typeFilter!=='all' && typeFilter,
+    regionFilter || (isAdmin ? 'All regions' : 'My regions'),
+  ].filter(Boolean).join('  ·  ');
+
+  async function exportCSV() {
+    const cols = selectedCols();
+    if (!cols.length) { showToast(dispatch, 'Pick at least one column', 'error'); return; }
+    setExporting(true);
+    try {
+      const { rows, enrByLic } = await fetchAllFiltered();
+      const esc = v => { const s = String(v==null?'':v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+      const csv = [cols.map(c=>esc(c.label)).join(',')]
+        .concat(rows.map(l => cols.map(c => esc(c.get(l, enrByLic[l.licence_number]))).join(','))).join('\n');
+      const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `prospects_${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      showToast(dispatch, `Exported ${rows.length} prospects to CSV`);
+      setShowExport(false);
+    } catch(e) { showToast(dispatch, 'Export failed: '+e.message, 'error'); }
+    finally { setExporting(false); }
+  }
+
+  async function exportPDF() {
+    const cols = selectedCols();
+    if (!cols.length) { showToast(dispatch, 'Pick at least one column', 'error'); return; }
+    setExporting(true);
+    try {
+      const { rows, enrByLic } = await fetchAllFiltered();
+      const h = s => String(s==null?'':s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+      const thead = cols.map(c=>`<th>${h(c.label)}</th>`).join('');
+      const tbody = rows.map(l=>`<tr>${cols.map(c=>`<td>${h(c.get(l, enrByLic[l.licence_number]))}</td>`).join('')}</tr>`).join('');
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Prospects</title>
+<style>body{font-family:Helvetica,Arial,sans-serif;color:#1e1e1e;margin:28px;font-size:11px}
+h1{color:#5b21b6;margin:0 0 2px;font-size:20px}.sub{color:#6b6b6b;font-size:11px;margin-bottom:10px}
+hr{border:none;border-top:2px solid #7c3aed;margin:8px 0 12px}
+table{width:100%;border-collapse:collapse}th{background:#5b21b6;color:#fff;text-align:left;padding:5px 7px;font-size:9px}
+td{border:1px solid #e5e0f0;padding:4px 7px;font-size:9px}tr:nth-child(even) td{background:#f6f3fc}
+@media print{@page{margin:12mm;size:landscape}}</style></head><body>
+<h1>Licence Prospects</h1><div class="sub">${h(rows.length)} establishments · Filters: ${h(filterSummary())} · ${new Date().toLocaleDateString('en-CA')}</div>
+<hr><table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table></body></html>`;
+      const w = window.open('', '_blank', 'width=1000,height=760');
+      if (!w) { showToast(dispatch, 'Allow pop-ups to export the PDF', 'error'); return; }
+      w.document.write(html); w.document.close(); w.focus();
+      setTimeout(()=>{ try { w.print(); } catch(_){} }, 500);
+      showToast(dispatch, `Prepared ${rows.length} prospects — use "Save as PDF" in the print dialog`);
+      setShowExport(false);
+    } catch(e) { showToast(dispatch, 'Export failed: '+e.message, 'error'); }
+    finally { setExporting(false); }
+  }
+
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto pb-24 space-y-4">
       <div className="flex items-center gap-3 mb-2">
@@ -14404,7 +14512,41 @@ function LicenseProspectsView() {
         <button onClick={()=>{ setPage(0); setHasMore(true); loadPage(true); }} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">
           🔍 Search
         </button>
+        <button onClick={()=>setShowExport(v=>!v)} className={`px-3 py-1.5 text-xs rounded-lg border font-medium transition-colors ${showExport?'bg-violet-600 text-white border-violet-600':'border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20'}`}>
+          ⬇ Export
+        </button>
       </div>
+
+      {/* Export panel — pick columns, then CSV or PDF (exports the full filtered list) */}
+      {showExport && (
+        <Card cls="p-4 space-y-3 border-violet-200 dark:border-violet-800">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">Export the filtered list · choose columns</p>
+            <button onClick={()=>setShowExport(false)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5">
+            {EXPORT_COLUMNS.map(c=>(
+              <label key={c.key} className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300 cursor-pointer">
+                <input type="checkbox" checked={!!exportCols[c.key]} onChange={e=>setExportCols(s=>({...s,[c.key]:e.target.checked}))}
+                  className="w-3.5 h-3.5 rounded border-gray-300 text-violet-600 focus:ring-violet-500"/>
+                {c.label}
+                {['phone','email','website'].includes(c.key) && <span className="text-[9px] text-gray-400">(if enriched)</span>}
+              </label>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <button onClick={exportCSV} disabled={exporting}
+              className="px-4 py-2 text-xs font-semibold rounded-lg bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">
+              {exporting ? 'Exporting…' : '⬇ Download CSV'}
+            </button>
+            <button onClick={exportPDF} disabled={exporting}
+              className="px-4 py-2 text-xs font-semibold rounded-lg border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 disabled:opacity-50">
+              {exporting ? 'Preparing…' : '⬇ Download PDF'}
+            </button>
+            <span className="text-[10px] text-gray-400">Exports all matches, not just the loaded page.</span>
+          </div>
+        </Card>
+      )}
 
       {/* Info strip */}
       <div className="text-xs text-gray-400 flex items-center gap-2">
