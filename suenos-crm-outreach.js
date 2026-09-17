@@ -4,7 +4,8 @@
 // master for establishment name/city. REVIEW ONLY — nothing is sent from here.
 
 function OutreachView() {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
+  const [marking, setMarking] = React.useState(null); // id or 'bulk' while saving
   const outreach   = state.outreach   || [];
   const enrichment = state.enrichment || [];
   const licInfo    = state.licenceInfo || {};
@@ -32,6 +33,16 @@ function OutreachView() {
     return <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${c}`}>{l}</span>; };
 
   const cnt = st => msgs.filter(m => m.status === st).length;
+  const queuedMsgs = msgs.filter(m => m.status === 'queued');
+
+  // Mark a drafted message as sent — for when you've sent it yourself from your
+  // mail drafts folder. Advances it out of "queued" so the agent can move on.
+  async function markSent(ids, key) {
+    setMarking(key);
+    try { await dbMarkOutreachSent(dispatch, ids); showToast(dispatch, (Array.isArray(ids)&&ids.length>1?ids.length+' messages':'Message')+' marked sent'); }
+    catch(e) { showToast(dispatch, 'Update failed: '+(e.message||e), 'error'); }
+    finally { setMarking(null); }
+  }
   const drafted = msgs.filter(m => m.draft_body).length;
   const emailsFound = enrichment.filter(e => e.email).length;
   const conf = v => v == null ? '—' : `${Math.round(Number(v)*100)}%`;
@@ -60,13 +71,20 @@ function OutreachView() {
           No outreach campaigns found yet.
         </div>
       ) : (<>
-        <div className="flex flex-wrap items-center gap-3 my-4">
+        <div className="flex flex-wrap items-end gap-3 my-4">
           <div>
             <label className="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Campaign</label>
             <select value={campaign} onChange={e=>setCampaign(e.target.value)} className={inputCls}>
               {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+          {queuedMsgs.length > 0 && (
+            <button onClick={()=>{ if(confirm(`Mark all ${queuedMsgs.length} queued messages as sent? Do this only for drafts you've already sent from your mail.`)) markSent(queuedMsgs.map(m=>m.id),'bulk'); }}
+              disabled={marking==='bulk'}
+              className="px-3 py-2 text-xs font-semibold rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-50">
+              {marking==='bulk' ? 'Marking…' : `✓ Mark all ${queuedMsgs.length} queued as sent`}
+            </button>
+          )}
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 mb-4">
@@ -103,10 +121,18 @@ function OutreachView() {
                         <Ic n="mail" cls="w-3 h-3 inline mr-1 -mt-0.5"/>{m.email || <span className="text-gray-400">no email</span>}
                       </p>
                     </div>
-                    <button onClick={()=>setOpen(o=>({...o,[m.id]:!o[m.id]}))}
-                      className="flex-shrink-0 text-xs font-medium text-teal-600 hover:text-teal-700 whitespace-nowrap">
-                      {isOpen ? 'Hide draft' : 'View draft'}
-                    </button>
+                    <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
+                      <button onClick={()=>setOpen(o=>({...o,[m.id]:!o[m.id]}))}
+                        className="text-xs font-medium text-teal-600 hover:text-teal-700 whitespace-nowrap">
+                        {isOpen ? 'Hide draft' : 'View draft'}
+                      </button>
+                      {m.status === 'queued' && (
+                        <button onClick={()=>markSent(m.id, m.id)} disabled={marking===m.id}
+                          className="text-[11px] font-medium px-2 py-0.5 rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 whitespace-nowrap disabled:opacity-50">
+                          {marking===m.id ? '…' : '✓ Mark sent'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {isOpen && (
                     <div className="border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 p-4 space-y-2">

@@ -531,6 +531,18 @@ async function dbLoadOutreach(dispatch) {
   }
   dispatch({ type:'SET_OUTREACH', payload:{ outreach: om||[], enrichment: en||[], licenceInfo } });
 }
+// Mark drafted outreach messages as sent (e.g. after you've sent them yourself
+// from your mail drafts folder). Only advances rows still in 'queued' so it can't
+// clobber replied/sent history. Refreshes state on success.
+async function dbMarkOutreachSent(dispatch, ids) {
+  const listIds = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+  if (!listIds.length) return;
+  const { error } = await sb.from('outreach_messages')
+    .update({ status:'sent', sent_at:new Date().toISOString() })
+    .in('id', listIds).eq('status','queued');
+  if (error) throw new Error(error.message);
+  await dbLoadOutreach(dispatch);
+}
 async function dbSaveAccountingSettings(dispatch, email, ccOnSend) {
   const e = (email || '').trim();
   dispatch({ type:'SET_ACCOUNTING_EMAIL', payload: e });
