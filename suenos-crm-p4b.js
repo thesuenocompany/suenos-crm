@@ -6792,6 +6792,7 @@ function LicenseProspectsView() {
   const [search, setSearch]         = useState('');
   const [typeSel, setTypeSel]       = useState([]);   // [] = all types
   const [regionSel, setRegionSel]   = useState([]);   // [] = all regions
+  const [licenseRegions, setLicenseRegions] = useState([]); // real regions present in the licence data
   const [openFilter, setOpenFilter] = useState(null); // 'type' | 'region' | null
   const [cityFilter, setCityFilter] = useState('');
   const [dismissingId, setDismissingId] = useState(null);
@@ -6800,6 +6801,7 @@ function LicenseProspectsView() {
   const [assignNote, setAssignNote]     = useState('Hey, this would be a great location to hit!');
   const [assigning, setAssigning]       = useState(false);
   const PAGE_SIZE = 50;
+  const UNASSIGNED_REGION = '— Outside our regions —';
 
   // Export (filtered list → CSV / PDF) with a column picker
   const [showExport, setShowExport] = useState(false);
@@ -6830,6 +6832,20 @@ function LicenseProspectsView() {
     return accountNormNames.some(an => an && licN && (licN.includes(an) || an.includes(licN)));
   }
 
+  // Apply the (multi-select) region filter, including the special "outside our
+  // regions" option which maps to licences with no region assigned (region IS NULL).
+  function applyRegionFilter(q, sel) {
+    if (!sel || !sel.length) return q;
+    const hasUnassigned = sel.includes(UNASSIGNED_REGION);
+    const named = sel.filter(r => r !== UNASSIGNED_REGION);
+    if (hasUnassigned && named.length) {
+      const list = named.map(r => `"${String(r).replace(/"/g,'')}"`).join(',');
+      return q.or(`region.is.null,region.in.(${list})`);
+    }
+    if (hasUnassigned) return q.is('region', null);
+    return q.in('region', named);
+  }
+
   async function loadPage(reset=false) {
     setLoading(true);
     try {
@@ -6838,7 +6854,7 @@ function LicenseProspectsView() {
       // Always exclude types with no useful establishment data
       q = q.not('licence_type', 'in', '("Agent","UBrew and UVin")');
       if (!isAdmin && myRegions?.length) q = q.in('region', myRegions);
-      if (regionSel.length) q = q.in('region', regionSel);
+      q = applyRegionFilter(q, regionSel);
       if (typeSel.length)   q = q.in('licence_type', typeSel);
       if (cityFilter.trim()) q = q.ilike('city', `%${cityFilter.trim()}%`);
       if (search.trim()) q = q.ilike('establishment', `%${search.trim()}%`);
@@ -6854,6 +6870,15 @@ function LicenseProspectsView() {
   }
 
   useEffect(()=>{ setPage(0); setHasMore(true); loadPage(true); }, [typeSel, regionSel, cityFilter]);
+
+  // Load the region values that actually exist in the licence data (these differ
+  // from the sales-territory names in state.regions, e.g. "Victoria" vs "VI").
+  useEffect(()=>{ (async()=>{
+    try {
+      const { data } = await sb.from('v_license_regions').select('region');
+      setLicenseRegions((data||[]).map(r=>r.region).filter(Boolean).sort((a,b)=>a.localeCompare(b)));
+    } catch(_) { /* non-fatal: dropdown just falls back to empty */ }
+  })(); }, []);
 
   function handleSearch(e) {
     if (e.key==='Enter') { setPage(0); setHasMore(true); loadPage(true); }
@@ -6982,7 +7007,9 @@ function LicenseProspectsView() {
     [...accounts].sort((a,b)=>(a.name||'').localeCompare(b.name||'')), [accounts]);
 
   const TYPES = ['all','Food Primary','Liquor Primary','Liquor Primary Club','Licensee Retail Store','Rural Licensee Retail Store','Wine Store','Manufacturer','Catering'];
-  const regionNames = state.regions?.length ? state.regions.map(r=>r.name) : [];
+  // Build the filter options from regions that actually exist in the licence data,
+  // then append the "outside our regions" option (licences with no region).
+  const regionNames = [...licenseRegions, UNASSIGNED_REGION];
 
   const TYPE_COLORS = {
     'Food Primary':'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400',
@@ -7021,7 +7048,7 @@ function LicenseProspectsView() {
     let q = sb.from('licenses').select('*').order('city').order('establishment')
       .not('licence_type', 'in', '("Agent","UBrew and UVin")');
     if (!isAdmin && myRegions?.length) q = q.in('region', myRegions);
-    if (regionSel.length) q = q.in('region', regionSel);
+    q = applyRegionFilter(q, regionSel);
     if (typeSel.length)   q = q.in('licence_type', typeSel);
     if (cityFilter.trim()) q = q.ilike('city', `%${cityFilter.trim()}%`);
     if (search.trim())     q = q.ilike('establishment', `%${search.trim()}%`);
