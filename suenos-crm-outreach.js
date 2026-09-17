@@ -18,6 +18,59 @@ function OutreachView() {
   const [tab, setTab] = React.useState('drafts');   // drafts | enrichment
   const [open, setOpen] = React.useState({});       // expanded draft bodies
 
+  // ── Auto-run status + pause control (CRM-owned refill) ──
+  const [runInfo, setRunInfo] = React.useState(null);
+  const [paused, setPaused]   = React.useState(false);
+  const [runBusy, setRunBusy] = React.useState(false);
+  const [runKey, setRunKey]   = React.useState(0);
+  React.useEffect(() => {
+    if (!campaign) return;
+    let dead = false;
+    (async () => {
+      try {
+        const [{ data: runs }, { data: camp }] = await Promise.all([
+          sb.from('outreach_runs').select('*').eq('campaign_id', campaign).order('requested_at', { ascending:false }).limit(1),
+          sb.from('outreach_campaigns').select('auto_refill').eq('id', campaign).maybeSingle(),
+        ]);
+        if (dead) return;
+        setRunInfo((runs && runs[0]) || null);
+        setPaused(camp ? camp.auto_refill === false : false);
+      } catch(e) {}
+    })();
+    return () => { dead = true; };
+  }, [campaign, runKey]);
+  async function generateNextBatch() {
+    setRunBusy(true);
+    try {
+      const { data, error } = await sb.rpc('outreach_request_run', { p_campaign: campaign });
+      if (error) throw error;
+      const s = data && data.status;
+      showToast(dispatch, s==='pending' ? 'Next batch requested — the agent will draft it shortly'
+        : s==='already_pending' ? 'A run is already pending' : s==='paused' ? 'Generation is paused' : 'Requested');
+      setRunKey(k=>k+1);
+    } catch(e) { showToast(dispatch, 'Request failed: '+(e.message||e), 'error'); }
+    finally { setRunBusy(false); }
+  }
+  async function togglePause() {
+    setRunBusy(true);
+    try {
+      const { error } = await sb.rpc('outreach_set_pause', { p_campaign: campaign, p_paused: !paused });
+      if (error) throw error;
+      showToast(dispatch, !paused ? 'Automatic generation paused' : 'Automatic generation resumed');
+      setPaused(p=>!p); setRunKey(k=>k+1);
+    } catch(e) { showToast(dispatch, 'Failed: '+(e.message||e), 'error'); }
+    finally { setRunBusy(false); }
+  }
+  const RUN_META = {
+    pending:  ['Next batch queued — waiting for the agent', 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'],
+    running:  ['Generating drafts…', 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'],
+    deferred: ['Waiting for daily capacity', 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'],
+    empty:    ['No eligible prospects right now', 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'],
+    done:     ['Last run complete', 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'],
+    partial:  ['Last run finished with some errors', 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'],
+    failed:   ['Last run failed', 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'],
+  };
+
   const msgs = React.useMemo(() =>
     outreach.filter(o => o.campaign_id === campaign), [outreach, campaign]);
 
@@ -85,7 +138,31 @@ function OutreachView() {
               {marking==='bulk' ? 'Marking…' : `✓ Mark all ${queuedMsgs.length} queued as sent`}
             </button>
           )}
+          <div className="flex-1"/>
+          <button onClick={generateNextBatch} disabled={runBusy || paused}
+            title={paused ? 'Resume automatic generation first' : 'Ask the agent to draft the next batch now'}
+            className="px-3 py-2 text-xs font-semibold rounded-lg bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-40">
+            {runBusy ? '…' : '✨ Generate next batch'}
+          </button>
+          <button onClick={togglePause} disabled={runBusy}
+            className={`px-3 py-2 text-xs font-semibold rounded-lg border disabled:opacity-50 ${paused?'border-amber-300 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20':'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'}`}>
+            {paused ? '▶ Resume auto-generate' : '⏸ Pause auto-generate'}
+          </button>
         </div>
+
+        {/* Run status */}
+        {(runInfo || paused) && (
+          <div className="flex items-center gap-2 -mt-1 mb-3 text-xs">
+            {paused && <span className="font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Paused</span>}
+            {runInfo && RUN_META[runInfo.status] && (
+              <span className={`font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${RUN_META[runInfo.status][1]}`}>{RUN_META[runInfo.status][0]}</span>
+            )}
+            {runInfo && runInfo.status==='deferred' && runInfo.next_capacity_at &&
+              <span className="text-gray-500">Capacity frees {fmtDT(runInfo.next_capacity_at)}</span>}
+            {runInfo && (runInfo.status==='done'||runInfo.status==='partial'||runInfo.status==='failed') &&
+              <span className="text-gray-500">{runInfo.drafted_count||0} drafted{runInfo.error_count?`, ${runInfo.error_count} error(s)`:''} · {fmtDT(runInfo.finished_at)}</span>}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 mb-4">
           {kpi(msgs.length,'Messages')}
