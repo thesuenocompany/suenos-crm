@@ -89,11 +89,28 @@ function OutreachView() {
   const queuedMsgs = msgs.filter(m => m.status === 'queued');
 
   // Mark a drafted message as sent — for when you've sent it yourself from your
-  // mail drafts folder. Advances it out of "queued" so the agent can move on.
-  async function markSent(ids, key) {
+  // mail drafts folder. Advances it out of "queued" AND records the touch on the
+  // matching account (creating a Prospect account if none exists yet).
+  async function markSent(objs, key) {
+    const list = Array.isArray(objs) ? objs : [objs];
     setMarking(key);
-    try { await dbMarkOutreachSent(dispatch, ids); showToast(dispatch, (Array.isArray(ids)&&ids.length>1?ids.length+' messages':'Message')+' marked sent'); }
+    try {
+      const r = await dbOutreachMarkSent(dispatch, list, { accounts: state.accounts||[], licenceInfo: licInfo, enrichment });
+      const bits = [];
+      if (r && r.created) bits.push(`${r.created} prospect${r.created>1?'s':''} created`);
+      if (r && r.noted)   bits.push(`${r.noted} logged to account${r.noted>1?'s':''}`);
+      showToast(dispatch, (list.length>1?list.length+' messages':'Message')+' marked sent'+(bits.length?' · '+bits.join(', '):''));
+    }
     catch(e) { showToast(dispatch, 'Update failed: '+(e.message||e), 'error'); }
+    finally { setMarking(null); }
+  }
+  // Remove/discard a draft you don't want to send. Clears it from the queue and
+  // suppresses that business from future outreach; leaves any Outlook draft as-is.
+  async function removeDrafts(objs, key) {
+    const list = Array.isArray(objs) ? objs : [objs];
+    setMarking(key);
+    try { await dbOutreachRemove(dispatch, list.map(o=>o.id)); showToast(dispatch, (list.length>1?list.length+' drafts':'Draft')+' removed'); }
+    catch(e) { showToast(dispatch, 'Remove failed: '+(e.message||e), 'error'); }
     finally { setMarking(null); }
   }
   const drafted = msgs.filter(m => m.draft_body).length;
@@ -132,7 +149,7 @@ function OutreachView() {
             </select>
           </div>
           {queuedMsgs.length > 0 && (
-            <button onClick={()=>{ if(confirm(`Mark all ${queuedMsgs.length} queued messages as sent? Do this only for drafts you've already sent from your mail.`)) markSent(queuedMsgs.map(m=>m.id),'bulk'); }}
+            <button onClick={()=>{ if(confirm(`Mark all ${queuedMsgs.length} queued messages as sent? Do this only for drafts you've already sent from your mail. Each will be logged to its account (a Prospect account is created if none exists).`)) markSent(queuedMsgs,'bulk'); }}
               disabled={marking==='bulk'}
               className="px-3 py-2 text-xs font-semibold rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-50">
               {marking==='bulk' ? 'Marking…' : `✓ Mark all ${queuedMsgs.length} queued as sent`}
@@ -204,10 +221,17 @@ function OutreachView() {
                         {isOpen ? 'Hide draft' : 'View draft'}
                       </button>
                       {m.status === 'queued' && (
-                        <button onClick={()=>markSent(m.id, m.id)} disabled={marking===m.id}
-                          className="text-[11px] font-medium px-2 py-0.5 rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 whitespace-nowrap disabled:opacity-50">
-                          {marking===m.id ? '…' : '✓ Mark sent'}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button onClick={()=>markSent([m], m.id)} disabled={marking===m.id}
+                            className="text-[11px] font-medium px-2 py-0.5 rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 whitespace-nowrap disabled:opacity-50">
+                            {marking===m.id ? '…' : '✓ Mark sent'}
+                          </button>
+                          <button onClick={()=>{ if(confirm(`Remove this draft for ${infoFor(m.licence_number).establishment||('licence '+m.licence_number)}? It leaves the queue and this business won't be contacted again by the agent. Any Outlook draft stays until you delete it.`)) removeDrafts([m], m.id); }}
+                            disabled={marking===m.id}
+                            className="text-[11px] font-medium px-2 py-0.5 rounded-md border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:hover:bg-red-900/20 whitespace-nowrap disabled:opacity-50">
+                            {marking===m.id ? '…' : '✕ Remove'}
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>

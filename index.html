@@ -788,6 +788,92 @@ async function dbMarkOutreachSent(dispatch, ids) {
   if (error) throw new Error(error.message);
   await dbLoadOutreach(dispatch);
 }
+
+// Remove/discard a queued outreach draft. Marks it 'skipped' so it leaves the
+// queue (letting the batch clear and auto-refill advance) while keeping the
+// recipient suppressed from future re-contact. Does NOT delete the Outlook draft.
+async function dbOutreachRemove(dispatch, ids) {
+  const listIds = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+  if (!listIds.length) return;
+  const { error } = await sb.from('outreach_messages')
+    .update({ status:'skipped', skip_reason:'Removed in CRM' })
+    .in('id', listIds).eq('status','queued');
+  if (error) throw new Error(error.message);
+  await dbLoadOutreach(dispatch);
+}
+
+const _outreachNormNm = n => (n||'').toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();
+
+// Mark drafted outreach messages as sent AND record the touch on the matching
+// account, creating a Prospect account when none exists. `msgObjs` are full
+// outreach_messages rows; `ctx` supplies { accounts, licenceInfo, enrichment }.
+// Returns { created, noted } for the toast. Account bookkeeping is best-effort
+// (per-message try/catch) so one bad row never blocks the rest.
+async function dbOutreachMarkSent(dispatch, msgObjs, ctx) {
+  const objs = (Array.isArray(msgObjs) ? msgObjs : [msgObjs]).filter(Boolean);
+  const ids  = objs.map(m=>m.id).filter(Boolean);
+  if (!ids.length) return { created:0, noted:0 };
+  const { accounts=[], licenceInfo={}, enrichment=[] } = ctx || {};
+  const nowIso = new Date().toISOString();
+  const today10 = nowIso.slice(0,10);
+
+  // 1) Advance messages to 'sent' (only those still queued)
+  const { error } = await sb.from('outreach_messages')
+    .update({ status:'sent', sent_at:nowIso }).in('id', ids).eq('status','queued');
+  if (error) throw new Error(error.message);
+
+  // Best enrichment row per licence (phone / website / contact)
+  const enrByLic = {};
+  enrichment.forEach(e => { if (e.licence_number && !enrByLic[e.licence_number]) enrByLic[e.licence_number] = e; });
+
+  const localNew = [];   // accounts created in THIS pass, so siblings match instead of duplicating
+  let created = 0, noted = 0;
+  for (const m of objs) {
+    try {
+      const info  = licenceInfo[m.licence_number] || {};
+      const enr   = enrByLic[m.licence_number] || {};
+      const email = (m.email || '').trim();
+      const emailLc = email.toLowerCase();
+      const estNorm = _outreachNormNm(info.establishment);
+      const note = `[${today10}] Outreach email sent (${m.campaign_id||'campaign'})${m.draft_subject?`: "${m.draft_subject}"`:''}`;
+      const pool = accounts.concat(localNew);
+
+      let acc = emailLc ? pool.find(a => (a.email||'').toLowerCase() === emailLc) : null;
+      if (!acc && m.licence_number) acc = pool.find(a => (a.licenseNumber||'') === String(m.licence_number));
+      if (!acc && estNorm)          acc = pool.find(a => _outreachNormNm(a.name) === estNorm);
+
+      if (acc) {
+        const notes = (acc.notes ? acc.notes.replace(/\s+$/,'') + '\n' : '') + note;
+        await dbUpdAccount(dispatch, { ...acc, notes,
+          email:   acc.email   || email,
+          phone:   acc.phone   || enr.phone   || '',
+          website: acc.website || enr.website || '' });
+        noted++;
+      } else {
+        const id = genId();
+        const name = info.establishment || `Licence ${m.licence_number||''}`.trim();
+        const row = {
+          id, name, type:null, region: info.region||null,
+          address: info.address||null, city: info.city||null, province:'BC',
+          postal_code: info.postal_code||null,
+          contact: enr.contact_name||null, email: email||null, phone: enr.phone||null,
+          website: enr.website||null, status:'Prospect', notes: note,
+          liquor_license_name: info.licensee||null,
+          license_number: String(m.licence_number||'') || null,
+          lead_source:'Prospecting Outreach', normalized_name: _outreachNormNm(name),
+        };
+        const { data:ins, error:insErr } = await sb.from('accounts').insert(row).select().single();
+        if (insErr) throw insErr;
+        const mapped = mapAccount(ins);
+        dispatch({ type:'ADD_ACCOUNT', payload: mapped });
+        localNew.push(mapped);
+        created++;
+      }
+    } catch(err) { console.warn('[Outreach→Account] record failed for message', m.id, err); }
+  }
+  await dbLoadOutreach(dispatch);
+  return { created, noted };
+}
 async function dbSaveAccountingSettings(dispatch, email, ccOnSend) {
   const e = (email || '').trim();
   dispatch({ type:'SET_ACCOUNTING_EMAIL', payload: e });
@@ -19838,11 +19924,28 @@ function OutreachView() {
   const queuedMsgs = msgs.filter(m => m.status === 'queued');
 
   // Mark a drafted message as sent — for when you've sent it yourself from your
-  // mail drafts folder. Advances it out of "queued" so the agent can move on.
-  async function markSent(ids, key) {
+  // mail drafts folder. Advances it out of "queued" AND records the touch on the
+  // matching account (creating a Prospect account if none exists yet).
+  async function markSent(objs, key) {
+    const list = Array.isArray(objs) ? objs : [objs];
     setMarking(key);
-    try { await dbMarkOutreachSent(dispatch, ids); showToast(dispatch, (Array.isArray(ids)&&ids.length>1?ids.length+' messages':'Message')+' marked sent'); }
+    try {
+      const r = await dbOutreachMarkSent(dispatch, list, { accounts: state.accounts||[], licenceInfo: licInfo, enrichment });
+      const bits = [];
+      if (r && r.created) bits.push(`${r.created} prospect${r.created>1?'s':''} created`);
+      if (r && r.noted)   bits.push(`${r.noted} logged to account${r.noted>1?'s':''}`);
+      showToast(dispatch, (list.length>1?list.length+' messages':'Message')+' marked sent'+(bits.length?' · '+bits.join(', '):''));
+    }
     catch(e) { showToast(dispatch, 'Update failed: '+(e.message||e), 'error'); }
+    finally { setMarking(null); }
+  }
+  // Remove/discard a draft you don't want to send. Clears it from the queue and
+  // suppresses that business from future outreach; leaves any Outlook draft as-is.
+  async function removeDrafts(objs, key) {
+    const list = Array.isArray(objs) ? objs : [objs];
+    setMarking(key);
+    try { await dbOutreachRemove(dispatch, list.map(o=>o.id)); showToast(dispatch, (list.length>1?list.length+' drafts':'Draft')+' removed'); }
+    catch(e) { showToast(dispatch, 'Remove failed: '+(e.message||e), 'error'); }
     finally { setMarking(null); }
   }
   const drafted = msgs.filter(m => m.draft_body).length;
@@ -19881,7 +19984,7 @@ function OutreachView() {
             </select>
           </div>
           {queuedMsgs.length > 0 && (
-            <button onClick={()=>{ if(confirm(`Mark all ${queuedMsgs.length} queued messages as sent? Do this only for drafts you've already sent from your mail.`)) markSent(queuedMsgs.map(m=>m.id),'bulk'); }}
+            <button onClick={()=>{ if(confirm(`Mark all ${queuedMsgs.length} queued messages as sent? Do this only for drafts you've already sent from your mail. Each will be logged to its account (a Prospect account is created if none exists).`)) markSent(queuedMsgs,'bulk'); }}
               disabled={marking==='bulk'}
               className="px-3 py-2 text-xs font-semibold rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-50">
               {marking==='bulk' ? 'Marking…' : `✓ Mark all ${queuedMsgs.length} queued as sent`}
@@ -19953,10 +20056,17 @@ function OutreachView() {
                         {isOpen ? 'Hide draft' : 'View draft'}
                       </button>
                       {m.status === 'queued' && (
-                        <button onClick={()=>markSent(m.id, m.id)} disabled={marking===m.id}
-                          className="text-[11px] font-medium px-2 py-0.5 rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 whitespace-nowrap disabled:opacity-50">
-                          {marking===m.id ? '…' : '✓ Mark sent'}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button onClick={()=>markSent([m], m.id)} disabled={marking===m.id}
+                            className="text-[11px] font-medium px-2 py-0.5 rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 whitespace-nowrap disabled:opacity-50">
+                            {marking===m.id ? '…' : '✓ Mark sent'}
+                          </button>
+                          <button onClick={()=>{ if(confirm(`Remove this draft for ${infoFor(m.licence_number).establishment||('licence '+m.licence_number)}? It leaves the queue and this business won't be contacted again by the agent. Any Outlook draft stays until you delete it.`)) removeDrafts([m], m.id); }}
+                            disabled={marking===m.id}
+                            className="text-[11px] font-medium px-2 py-0.5 rounded-md border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:hover:bg-red-900/20 whitespace-nowrap disabled:opacity-50">
+                            {marking===m.id ? '…' : '✕ Remove'}
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>

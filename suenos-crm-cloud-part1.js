@@ -543,6 +543,92 @@ async function dbMarkOutreachSent(dispatch, ids) {
   if (error) throw new Error(error.message);
   await dbLoadOutreach(dispatch);
 }
+
+// Remove/discard a queued outreach draft. Marks it 'skipped' so it leaves the
+// queue (letting the batch clear and auto-refill advance) while keeping the
+// recipient suppressed from future re-contact. Does NOT delete the Outlook draft.
+async function dbOutreachRemove(dispatch, ids) {
+  const listIds = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+  if (!listIds.length) return;
+  const { error } = await sb.from('outreach_messages')
+    .update({ status:'skipped', skip_reason:'Removed in CRM' })
+    .in('id', listIds).eq('status','queued');
+  if (error) throw new Error(error.message);
+  await dbLoadOutreach(dispatch);
+}
+
+const _outreachNormNm = n => (n||'').toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();
+
+// Mark drafted outreach messages as sent AND record the touch on the matching
+// account, creating a Prospect account when none exists. `msgObjs` are full
+// outreach_messages rows; `ctx` supplies { accounts, licenceInfo, enrichment }.
+// Returns { created, noted } for the toast. Account bookkeeping is best-effort
+// (per-message try/catch) so one bad row never blocks the rest.
+async function dbOutreachMarkSent(dispatch, msgObjs, ctx) {
+  const objs = (Array.isArray(msgObjs) ? msgObjs : [msgObjs]).filter(Boolean);
+  const ids  = objs.map(m=>m.id).filter(Boolean);
+  if (!ids.length) return { created:0, noted:0 };
+  const { accounts=[], licenceInfo={}, enrichment=[] } = ctx || {};
+  const nowIso = new Date().toISOString();
+  const today10 = nowIso.slice(0,10);
+
+  // 1) Advance messages to 'sent' (only those still queued)
+  const { error } = await sb.from('outreach_messages')
+    .update({ status:'sent', sent_at:nowIso }).in('id', ids).eq('status','queued');
+  if (error) throw new Error(error.message);
+
+  // Best enrichment row per licence (phone / website / contact)
+  const enrByLic = {};
+  enrichment.forEach(e => { if (e.licence_number && !enrByLic[e.licence_number]) enrByLic[e.licence_number] = e; });
+
+  const localNew = [];   // accounts created in THIS pass, so siblings match instead of duplicating
+  let created = 0, noted = 0;
+  for (const m of objs) {
+    try {
+      const info  = licenceInfo[m.licence_number] || {};
+      const enr   = enrByLic[m.licence_number] || {};
+      const email = (m.email || '').trim();
+      const emailLc = email.toLowerCase();
+      const estNorm = _outreachNormNm(info.establishment);
+      const note = `[${today10}] Outreach email sent (${m.campaign_id||'campaign'})${m.draft_subject?`: "${m.draft_subject}"`:''}`;
+      const pool = accounts.concat(localNew);
+
+      let acc = emailLc ? pool.find(a => (a.email||'').toLowerCase() === emailLc) : null;
+      if (!acc && m.licence_number) acc = pool.find(a => (a.licenseNumber||'') === String(m.licence_number));
+      if (!acc && estNorm)          acc = pool.find(a => _outreachNormNm(a.name) === estNorm);
+
+      if (acc) {
+        const notes = (acc.notes ? acc.notes.replace(/\s+$/,'') + '\n' : '') + note;
+        await dbUpdAccount(dispatch, { ...acc, notes,
+          email:   acc.email   || email,
+          phone:   acc.phone   || enr.phone   || '',
+          website: acc.website || enr.website || '' });
+        noted++;
+      } else {
+        const id = genId();
+        const name = info.establishment || `Licence ${m.licence_number||''}`.trim();
+        const row = {
+          id, name, type:null, region: info.region||null,
+          address: info.address||null, city: info.city||null, province:'BC',
+          postal_code: info.postal_code||null,
+          contact: enr.contact_name||null, email: email||null, phone: enr.phone||null,
+          website: enr.website||null, status:'Prospect', notes: note,
+          liquor_license_name: info.licensee||null,
+          license_number: String(m.licence_number||'') || null,
+          lead_source:'Prospecting Outreach', normalized_name: _outreachNormNm(name),
+        };
+        const { data:ins, error:insErr } = await sb.from('accounts').insert(row).select().single();
+        if (insErr) throw insErr;
+        const mapped = mapAccount(ins);
+        dispatch({ type:'ADD_ACCOUNT', payload: mapped });
+        localNew.push(mapped);
+        created++;
+      }
+    } catch(err) { console.warn('[Outreach→Account] record failed for message', m.id, err); }
+  }
+  await dbLoadOutreach(dispatch);
+  return { created, noted };
+}
 async function dbSaveAccountingSettings(dispatch, email, ccOnSend) {
   const e = (email || '').trim();
   dispatch({ type:'SET_ACCOUNTING_EMAIL', payload: e });
