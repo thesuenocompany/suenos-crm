@@ -339,9 +339,18 @@ function mapAccount(r) {
     pstNumber:r.pst_number||'', pstOverride:r.pst_override||'',
     menuPlacements:r.menu_placements||{}, lastVisit:r.last_visit, lastOrder:r.last_order,
     logoUrl:r.logo_url||null, createdAt:r.created_at?.slice(0,10)||today(),
+    city:r.city||'', province:r.province||'', postalCode:r.postal_code||'', leadSource:r.lead_source||'',
     budgetTotal:r.budget_total||null, budgetPerBottle:r.budget_per_bottle||null,
     budgetPerCase:r.budget_per_case||null, budgetPctBottle:r.budget_pct_bottle||null,
     budgetPctCase:r.budget_pct_case||null };
+}
+function mapCallLog(r) {
+  return { id:r.id, conversationId:r.conversation_id||'', callSid:r.call_sid||'', agentId:r.agent_id||'',
+    accountId:r.account_id||null, campaign:r.campaign||'', phone:r.phone||'',
+    direction:r.direction||'outbound', status:r.status||'initiated', callSuccessful:r.call_successful||'',
+    summary:r.summary||'', transcript:r.transcript||null, dataCollection:r.data_collection||null,
+    evaluation:r.evaluation||null, durationSecs:r.duration_secs||null, cost:r.cost||null,
+    startedAt:r.started_at, endedAt:r.ended_at, createdAt:r.created_at };
 }
 function mapVisit(r) {
   return { id:r.id, accountId:r.account_id, date:r.date, contact:r.contact||'',
@@ -461,6 +470,8 @@ const INITIAL_STATE = {
   accountingCcOnSend: true,   // auto-send a copy to accounting whenever an invoice is emailed
   // Prospecting agent output (admin, read-only): outreach drafts + enrichment
   outreach: [], enrichment: [], licenceInfo: {},
+  // Voice-agent (ElevenLabs/Twilio) call logs
+  calls: [],
   // voice & tone brand guidelines (pasted text, stored in app_settings)
   voiceTone: '',
   // structured brand voice controls for the AI writer (stored in app_settings as JSON)
@@ -582,6 +593,8 @@ function reducer(s, a) {
     case 'SET_ACCOUNTING_EMAIL':    return {...s, accountingEmail:a.payload};
     case 'SET_ACCOUNTING_CC':       return {...s, accountingCcOnSend:a.payload};
     case 'SET_OUTREACH':            return {...s, outreach:a.payload.outreach, enrichment:a.payload.enrichment, licenceInfo:a.payload.licenceInfo};
+    case 'SET_CALLS':               return {...s, calls:a.payload};
+    case 'ADD_CALL':                return {...s, calls:[a.payload, ...s.calls]};
     case 'SET_VOICE_TONE':          return {...s, voiceTone:a.payload};
     case 'SET_VOICE_PROFILE':       return {...s, voiceProfile:a.payload};
     case 'PRICING_FETCHING':     return {...s, pricingFetching:a.payload};
@@ -725,6 +738,7 @@ async function loadAllData(dispatch) {
     try { await dbLoadMarketingAlerts(dispatch); } catch(ma) { console.warn('[MarketingAlerts] load failed:', ma); }
     // Load prospecting-agent output (admin only): outreach drafts + enrichment
     try { if (_role === 'admin') await dbLoadOutreach(dispatch); } catch(oe) { console.warn('[Outreach] load failed:', oe); }
+    try { await dbLoadCalls(dispatch); } catch(ce) { console.warn('[Calls] load failed:', ce); }
   } catch(e) {
     console.error('Data load error:', e);
   } finally {
@@ -873,6 +887,44 @@ async function dbOutreachMarkSent(dispatch, msgObjs, ctx) {
   }
   await dbLoadOutreach(dispatch);
   return { created, noted };
+}
+// ── VOICE-AGENT CALLS (ElevenLabs/Twilio) ─────────────────────
+// Load recent call logs (admin surfaces them; also used per-account).
+async function dbLoadCalls(dispatch) {
+  const { data, error } = await sb.from('call_logs').select('*').order('started_at', { ascending:false }).limit(1000);
+  if (error) { console.warn('[Calls] load failed:', error.message); return; }
+  dispatch({ type:'SET_CALLS', payload:(data||[]).map(mapCallLog) });
+}
+// Start an outbound call to one account/number via the edge function.
+async function dbStartCall(dispatch, { accountId, phone, name, campaign }) {
+  const { data, error } = await sb.functions.invoke('elevenlabs-start-call', {
+    body: { account_id: accountId || null, phone: phone || null, name: name || null, campaign: campaign || null },
+  });
+  if (error) {
+    // Surface the function's JSON error message when present
+    let msg = error.message || 'Call failed';
+    try { const ctx = await error.context?.json?.(); if (ctx?.error) msg = ctx.error + (ctx.detail ? ` — ${ctx.detail}` : ''); } catch(_){}
+    throw new Error(msg);
+  }
+  if (data && data.success) {
+    dispatch({ type:'ADD_CALL', payload: mapCallLog({
+      id:'tmp-'+(data.conversation_id||Date.now()), conversation_id:data.conversation_id, call_sid:data.callSid,
+      account_id:accountId||null, campaign:campaign||null, phone:data.to||phone, status:'initiated',
+      started_at:new Date().toISOString(),
+    }) });
+  }
+  return data;
+}
+// Start calls for a list of accounts (sequential, best-effort). Returns counts.
+async function dbBatchCall(dispatch, accounts, campaign) {
+  let started = 0, skipped = 0, failed = 0;
+  for (const a of accounts) {
+    if (!a.phone) { skipped++; continue; }
+    try { await dbStartCall(dispatch, { accountId:a.id, phone:a.phone, name:a.name, campaign }); started++; }
+    catch(_) { failed++; }
+  }
+  if (started) await dbLoadCalls(dispatch);
+  return { started, skipped, failed };
 }
 async function dbSaveAccountingSettings(dispatch, email, ccOnSend) {
   const e = (email || '').trim();
@@ -2835,7 +2887,7 @@ const NAV_CFG = {
     {s:'Marketing',items:[{v:'cluster-ads',n:'ad',l:'Ad Planner'},{v:'media-desk',n:'ad',l:'Media Desk'},{v:'weather-ads',n:'ad',l:'Weather Ads'},{v:'ad-creatives',n:'upload',l:'Creatives'},{v:'ad-performance',n:'reports',l:'Ad Performance'},{v:'social',n:'globe',l:'Social'},{v:'email-analytics',n:'mail',l:'Email'}]},
     {s:'Insights',items:[{v:'reports',n:'reports',l:'Reports'},{v:'volume-report',n:'reports',l:'Volume Report'},{v:'map',n:'map',l:'Account Map'},{v:'web-analytics',n:'globe',l:'Website'}]},
     {s:'Promo Materials',items:[{v:'promo-orders-admin',n:'orders',l:'Orders'},{v:'manage-promo',n:'products',l:'Materials'},{v:'manage-promo-categories',n:'tag',l:'Categories'},{v:'promo-reporting',n:'reports',l:'Reporting'}]},
-    {s:'Setup',   items:[{v:'products',n:'products',l:'Products'},{v:'stores',n:'stores',l:'Stores'},{v:'targets',n:'targets',l:'Targets'},{v:'sales-import',n:'download',l:'Sales Import'},{v:'users',n:'settings',l:'Team'},{v:'regions',n:'pin',l:'Regions'},{v:'licenses-admin',n:'accounts',l:'BC Licences'},{v:'dashboard-email',n:'mail',l:'Email Snapshot'},{v:'licence-prospects',n:'accounts',l:'Prospects'},{v:'outreach',n:'mail',l:'Outreach'}]},
+    {s:'Setup',   items:[{v:'products',n:'products',l:'Products'},{v:'stores',n:'stores',l:'Stores'},{v:'targets',n:'targets',l:'Targets'},{v:'sales-import',n:'download',l:'Sales Import'},{v:'users',n:'settings',l:'Team'},{v:'regions',n:'pin',l:'Regions'},{v:'licenses-admin',n:'accounts',l:'BC Licences'},{v:'dashboard-email',n:'mail',l:'Email Snapshot'},{v:'licence-prospects',n:'accounts',l:'Prospects'},{v:'outreach',n:'mail',l:'Outreach'},{v:'calls',n:'phone',l:'Voice Calls'}]},
   ],
   rep:[
     {s:'Main',    items:[{v:'dashboard',n:'dashboard',l:'Dashboard'},{v:'accounts',n:'accounts',l:'Accounts'},{v:'visits',n:'visits',l:'Visits'},{v:'tasks',n:'tasks',l:'Tasks'},{v:'licence-prospects',n:'accounts',l:'Prospects'}]},
@@ -4727,6 +4779,16 @@ function AccountList() {
   const [fHealth, setFHealth] = useState('');
   const [showDupes, setShowDupes] = useState(false);
   const [sheetAccount, setSheetAccount] = useState(null);
+  const [showExport, setShowExport] = useState(false);
+  const [exporting, setExporting]   = useState(false);
+  const [callingBatch, setCallingBatch] = useState(false);
+  const [exportCols, setExportCols] = useState({
+    name:true, type:true, status:true, region:true, health:true,
+    contact:true, email:true, phone:true, website:false,
+    address:true, city:false, province:false, postalCode:false,
+    licenseNumber:true, liquorLicenseName:false, pstNumber:false,
+    assignedRep:true, lastVisit:true, lastOrder:false, leadSource:false, notes:false,
+  });
 
   // Respond to params passed via NAV (e.g. from chart/health card clicks)
   const [salesOnly, setSalesOnly] = useState(false);
@@ -4789,9 +4851,140 @@ function AccountList() {
     return groups;
   }, [state.accounts, isAdmin]);
 
+  // ── Export the filtered list (CSV / PDF) with a column picker ──
+  const repName = id => { const u = state.users.find(u=>u.id===id); return u ? u.name : ''; };
+  const EXPORT_COLUMNS = [
+    { key:'name',              label:'Name',              get:a=>a.name||'' },
+    { key:'type',              label:'Type',              get:a=>a.type||'' },
+    { key:'status',            label:'Status',            get:a=>a.status||'' },
+    { key:'region',            label:'Region',            get:a=>a.region||'' },
+    { key:'health',            label:'Health',            get:a=>healthInfo(calcHealth(a)).label },
+    { key:'contact',           label:'Contact',           get:a=>a.contact||'' },
+    { key:'email',             label:'Email',             get:a=>a.email||'' },
+    { key:'phone',             label:'Phone',             get:a=>a.phone||'' },
+    { key:'website',           label:'Website',           get:a=>a.website||'' },
+    { key:'address',           label:'Address',           get:a=>a.address||'' },
+    { key:'city',              label:'City',              get:a=>a.city||'' },
+    { key:'province',          label:'Province',          get:a=>a.province||'' },
+    { key:'postalCode',        label:'Postal Code',       get:a=>a.postalCode||'' },
+    { key:'licenseNumber',     label:'Licence #',         get:a=>a.licenseNumber||'' },
+    { key:'liquorLicenseName', label:'Liquor Licence Name', get:a=>a.liquorLicenseName||'' },
+    { key:'pstNumber',         label:'PST #',             get:a=>a.pstNumber||'' },
+    { key:'assignedRep',       label:'Assigned Rep',      get:a=>repName(a.assignedRep) },
+    { key:'lastVisit',         label:'Last Visit',        get:a=>a.lastVisit||'' },
+    { key:'lastOrder',         label:'Last Order',        get:a=>a.lastOrder||'' },
+    { key:'leadSource',        label:'Lead Source',       get:a=>a.leadSource||'' },
+    { key:'notes',             label:'Notes',             get:a=>(a.notes||'').replace(/\s+/g,' ').trim() },
+  ];
+  const selectedCols = () => EXPORT_COLUMNS.filter(c => exportCols[c.key]);
+  const filterSummary = () => [
+    q.trim() && `search "${q.trim()}"`,
+    fType && `Type: ${fType}`, fStatus && `Status: ${fStatus}`,
+    fRegion && `Region: ${fRegion}`, fHealth && `Health: ${fHealth}`,
+    salesOnly && 'With sales only',
+  ].filter(Boolean).join('  ·  ') || 'All accounts';
+
+  function exportCSV() {
+    const cols = selectedCols();
+    if (!cols.length) { showToast(dispatch, 'Pick at least one column', 'error'); return; }
+    setExporting(true);
+    try {
+      const esc = v => { const s = String(v==null?'':v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+      const csv = [cols.map(c=>esc(c.label)).join(',')]
+        .concat(filtered.map(a => cols.map(c => esc(c.get(a))).join(','))).join('\n');
+      const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const el = document.createElement('a');
+      el.href = url; el.download = `accounts_${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(el); el.click(); el.remove(); URL.revokeObjectURL(url);
+      showToast(dispatch, `Exported ${filtered.length} account${filtered.length!==1?'s':''} to CSV`);
+      setShowExport(false);
+    } catch(e) { showToast(dispatch, 'Export failed: '+e.message, 'error'); }
+    finally { setExporting(false); }
+  }
+
+  // Batch-call the filtered list with the voice agent (admin only, capped + confirmed)
+  const CALL_CAP = 25;
+  async function callFiltered() {
+    const withPhone = filtered.filter(a => a.phone);
+    if (!withPhone.length) { showToast(dispatch, 'No accounts in this list have a phone number', 'error'); return; }
+    const batch = withPhone.slice(0, CALL_CAP);
+    const extra = withPhone.length > CALL_CAP ? ` (first ${CALL_CAP} of ${withPhone.length})` : '';
+    if (!confirm(`Start voice-agent calls to ${batch.length} store${batch.length!==1?'s':''}${extra}? Calls are placed immediately via your ElevenLabs/Twilio agent.`)) return;
+    setCallingBatch(true);
+    try {
+      const r = await dbBatchCall(dispatch, batch, 'voice-outreach');
+      showToast(dispatch, `Started ${r.started} call${r.started!==1?'s':''}${r.failed?`, ${r.failed} failed`:''}${r.skipped?`, ${r.skipped} skipped`:''}`);
+    } catch(e) { showToast(dispatch, 'Batch call failed: '+(e.message||e), 'error'); }
+    finally { setCallingBatch(false); }
+  }
+
+  function exportPDF() {
+    const cols = selectedCols();
+    if (!cols.length) { showToast(dispatch, 'Pick at least one column', 'error'); return; }
+    setExporting(true);
+    try {
+      const h = s => String(s==null?'':s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+      const thead = cols.map(c=>`<th>${h(c.label)}</th>`).join('');
+      const tbody = filtered.map(a=>`<tr>${cols.map(c=>`<td>${h(c.get(a))}</td>`).join('')}</tr>`).join('');
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Accounts</title>
+<style>body{font-family:Helvetica,Arial,sans-serif;color:#1e1e1e;margin:28px;font-size:11px}
+h1{color:#0f766e;margin:0 0 2px;font-size:20px}.sub{color:#6b6b6b;font-size:11px;margin-bottom:10px}
+hr{border:none;border-top:2px solid #0d9488;margin:8px 0 12px}
+table{width:100%;border-collapse:collapse}th{background:#0f766e;color:#fff;text-align:left;padding:5px 7px;font-size:9px}
+td{border:1px solid #d7ece9;padding:4px 7px;font-size:9px}tr:nth-child(even) td{background:#f0faf8}
+@media print{@page{margin:12mm;size:landscape}}</style></head><body>
+<h1>Accounts</h1><div class="sub">${h(filtered.length)} account${filtered.length!==1?'s':''} · Filters: ${h(filterSummary())} · ${new Date().toLocaleDateString('en-CA')}</div>
+<hr><table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table></body></html>`;
+      const w = window.open('', '_blank', 'width=1000,height=760');
+      if (!w) { showToast(dispatch, 'Allow pop-ups to export the PDF', 'error'); setExporting(false); return; }
+      w.document.write(html); w.document.close(); w.focus();
+      setTimeout(()=>{ try { w.print(); } catch(_){} }, 500);
+      showToast(dispatch, `Prepared ${filtered.length} account${filtered.length!==1?'s':''} — use "Save as PDF" in the print dialog`);
+      setShowExport(false);
+    } catch(e) { showToast(dispatch, 'Export failed: '+e.message, 'error'); }
+    finally { setExporting(false); }
+  }
+
   return (
     <div className="p-4 sm:p-6 pb-24 lg:pb-6">
       {sheetAccount && <SendSellSheetModal account={sheetAccount} onClose={()=>setSheetAccount(null)} />}
+      {showExport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={()=>setShowExport(false)}>
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-auto p-5" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-base font-bold text-gray-900 dark:text-white">Export accounts</h3>
+              <button onClick={()=>setShowExport(false)} className="text-gray-400 hover:text-gray-600"><Ic n="x" cls="w-5 h-5"/></button>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">{filtered.length} account{filtered.length!==1?'s':''} match your current filters · {filterSummary()}</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Columns</p>
+              <div className="flex gap-2">
+                <button onClick={()=>setExportCols(Object.fromEntries(EXPORT_COLUMNS.map(c=>[c.key,true])))} className="text-[11px] text-teal-600 hover:underline">All</button>
+                <button onClick={()=>setExportCols(Object.fromEntries(EXPORT_COLUMNS.map(c=>[c.key,false])))} className="text-[11px] text-gray-400 hover:underline">None</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 mb-4">
+              {EXPORT_COLUMNS.map(c=>(
+                <label key={c.key} className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
+                  <input type="checkbox" checked={!!exportCols[c.key]} onChange={()=>setExportCols(s=>({...s,[c.key]:!s[c.key]}))} className="w-3.5 h-3.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500"/>
+                  <span className="text-gray-700 dark:text-gray-300">{c.label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={exportCSV} disabled={exporting}
+                className="flex-1 px-3 py-2 text-sm font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white disabled:opacity-50">
+                {exporting ? '…' : 'Download CSV'}
+              </button>
+              <button onClick={exportPDF} disabled={exporting}
+                className="flex-1 px-3 py-2 text-sm font-semibold rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-50">
+                {exporting ? '…' : 'Export PDF'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-500">{filtered.length} account{filtered.length!==1?'s':''}</p>
@@ -4803,6 +4996,16 @@ function AccountList() {
               {dupeGroups.length} Duplicate{dupeGroups.length!==1?'s':''}
             </button>
           )}
+          {isAdmin && (
+            <button onClick={callFiltered} disabled={callingBatch || filtered.length===0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-40 transition">
+              <Ic n="phone" cls="w-3.5 h-3.5"/> {callingBatch ? 'Calling…' : 'Call list'}
+            </button>
+          )}
+          <button onClick={()=>setShowExport(true)} disabled={filtered.length===0}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 transition">
+            <Ic n="download" cls="w-3.5 h-3.5"/> Export
+          </button>
           <Btn onClick={()=>dispatch({type:'NAV',view:'new-account'})}>
             <Ic n="plus" cls="w-4 h-4" /> New Account
           </Btn>
@@ -20128,6 +20331,188 @@ function OutreachView() {
   );
 }
 
+// suenos-crm-calls.js — Voice Agent Calls (admin)
+// Trigger outbound calls to stores via the ElevenLabs/Twilio agent and review
+// what came back: transcript, summary, outcome, and any structured data. Each
+// completed call is also logged onto its account by the post-call webhook.
+
+function CallsView() {
+  const { state, dispatch } = useApp();
+  const isAdmin = state.user?.role === 'admin';
+  const calls = state.calls || [];
+  const accounts = state.accounts || [];
+
+  const [pick, setPick]       = React.useState('');      // account search text
+  const [picked, setPicked]   = React.useState(null);    // selected account
+  const [calling, setCalling] = React.useState(false);
+  const [q, setQ]             = React.useState('');       // filter the call list
+  const [open, setOpen]       = React.useState({});       // expanded transcripts
+
+  const acctById = React.useMemo(() => Object.fromEntries(accounts.map(a=>[a.id,a])), [accounts]);
+  const fmtDT = d => d ? new Date(d).toLocaleString('en-CA',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+  const fmtDur = s => s==null ? '' : `${Math.floor(s/60)}m ${s%60}s`;
+
+  const matches = React.useMemo(() => {
+    const t = pick.trim().toLowerCase();
+    if (!t) return [];
+    return accounts.filter(a => a.phone && (a.name||'').toLowerCase().includes(t)).slice(0,8);
+  }, [pick, accounts]);
+
+  async function startCall(acc) {
+    if (!acc) return;
+    if (!acc.phone) { showToast(dispatch, 'That account has no phone number', 'error'); return; }
+    if (!confirm(`Call ${acc.name} at ${acc.phone} with the voice agent now?`)) return;
+    setCalling(true);
+    try {
+      await dbStartCall(dispatch, { accountId:acc.id, phone:acc.phone, name:acc.name, campaign:'voice-outreach' });
+      showToast(dispatch, `Calling ${acc.name}…`);
+      setPicked(null); setPick('');
+    } catch(e) { showToast(dispatch, 'Call failed: '+(e.message||e), 'error'); }
+    finally { setCalling(false); }
+  }
+
+  const statusMeta = {
+    initiated:   ['Calling…',   'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'],
+    in_progress: ['In progress','bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'],
+    done:        ['Done',       'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'],
+    failed:      ['Failed',     'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'],
+  };
+  const outcomeMeta = {
+    success: ['Success','bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'],
+    failure: ['No / failure','bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'],
+    unknown: ['Unclear','bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'],
+  };
+  const chip = (meta) => meta ? <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${meta[1]}`}>{meta[0]}</span> : null;
+
+  const filtered = React.useMemo(() => {
+    const t = q.trim().toLowerCase();
+    if (!t) return calls;
+    return calls.filter(c => {
+      const nm = (acctById[c.accountId]?.name || '').toLowerCase();
+      return nm.includes(t) || (c.phone||'').includes(t) || (c.summary||'').toLowerCase().includes(t);
+    });
+  }, [calls, q, acctById]);
+
+  if (!isAdmin) return <div className="p-6 text-sm text-gray-500">Voice agent calls are available to admins.</div>;
+
+  const inputCls = "px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500";
+
+  return (
+    <div className="max-w-4xl mx-auto p-4 sm:p-6 pb-24">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-8 h-8 rounded-xl bg-teal-600 flex items-center justify-center text-white"><Ic n="phone" cls="w-4 h-4"/></div>
+        <div>
+          <h1 className="text-lg font-bold text-gray-900 dark:text-white">Voice Agent Calls</h1>
+          <p className="text-xs text-gray-500">Call stores with the AI voice agent. Each call is logged to its account with a transcript and summary.</p>
+        </div>
+      </div>
+
+      {/* Start a call */}
+      <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 p-4 mb-5">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Call a store</p>
+        <div className="relative">
+          <input value={pick} onChange={e=>{ setPick(e.target.value); setPicked(null); }}
+            placeholder="Search an account with a phone number…" className={`${inputCls} w-full`} />
+          {matches.length>0 && !picked && (
+            <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg">
+              {matches.map(a=>(
+                <button key={a.id} onClick={()=>{ setPicked(a); setPick(a.name); }}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center justify-between gap-2">
+                  <span className="text-gray-800 dark:text-gray-200 truncate">{a.name}</span>
+                  <span className="text-xs text-gray-400 whitespace-nowrap">{a.phone}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 mt-3">
+          <button onClick={()=>startCall(picked)} disabled={!picked || calling}
+            className="px-4 py-2 text-sm font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white disabled:opacity-40 flex items-center gap-1.5">
+            <Ic n="phone" cls="w-4 h-4"/> {calling ? 'Starting…' : picked ? `Call ${picked.name}` : 'Pick an account'}
+          </button>
+          {picked && <span className="text-xs text-gray-500">{picked.phone}</span>}
+        </div>
+        <p className="text-[11px] text-gray-400 mt-2">Calls are placed by your ElevenLabs agent over Twilio. Results appear below and on the account once the call ends.</p>
+      </div>
+
+      {/* Recent calls */}
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Recent calls <span className="text-gray-400 font-normal">({calls.length})</span></p>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Filter…" className={`${inputCls} py-1.5 text-xs`} />
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="text-center text-sm text-gray-500 py-14 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800">
+          No calls yet. Start one above, or run a batch from Accounts → Call list.
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          {filtered.map(c=>{
+            const acc = acctById[c.accountId];
+            const isOpen = open[c.id];
+            const tr = Array.isArray(c.transcript) ? c.transcript : [];
+            const dc = c.dataCollection && typeof c.dataCollection==='object' ? Object.entries(c.dataCollection) : [];
+            return (
+              <div key={c.id} className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden">
+                <div className="flex items-start justify-between gap-3 p-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {acc
+                        ? <button onClick={()=>dispatch({type:'NAV',view:'account-detail',params:{id:acc.id}})} className="font-semibold text-teal-700 dark:text-teal-400 hover:underline truncate">{acc.name}</button>
+                        : <span className="font-semibold text-gray-900 dark:text-white truncate">{c.phone || 'Unknown'}</span>}
+                      {chip(statusMeta[c.status])}
+                      {c.callSuccessful && chip(outcomeMeta[c.callSuccessful])}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {c.phone || '—'}{c.durationSecs!=null?` · ${fmtDur(c.durationSecs)}`:''} · {fmtDT(c.startedAt)}
+                    </p>
+                    {c.summary && <p className="text-xs text-gray-600 dark:text-gray-300 mt-1.5 line-clamp-2">{c.summary}</p>}
+                  </div>
+                  {(tr.length>0 || dc.length>0) && (
+                    <button onClick={()=>setOpen(o=>({...o,[c.id]:!o[c.id]}))}
+                      className="text-xs font-medium text-teal-600 hover:text-teal-700 whitespace-nowrap flex-shrink-0">
+                      {isOpen ? 'Hide' : 'Transcript'}
+                    </button>
+                  )}
+                </div>
+                {isOpen && (
+                  <div className="border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 p-4 space-y-3">
+                    {dc.length>0 && (
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase text-gray-400 mb-1">Captured</p>
+                        <div className="flex flex-wrap gap-2">
+                          {dc.map(([k,v])=>(
+                            <span key={k} className="text-[11px] px-2 py-0.5 rounded-md bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300">
+                              <b>{k.replace(/_/g,' ')}:</b> {String(v && typeof v==='object' ? (v.value ?? JSON.stringify(v)) : v)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {tr.length>0 && (
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase text-gray-400 mb-1">Transcript</p>
+                        <div className="space-y-1.5 max-h-72 overflow-auto">
+                          {tr.map((t,i)=>(
+                            <div key={i} className={`text-sm ${t.role==='agent'?'text-gray-800 dark:text-gray-200':'text-teal-800 dark:text-teal-300'}`}>
+                              <span className="text-[10px] font-bold uppercase mr-1.5 text-gray-400">{t.role==='agent'?'Agent':'Store'}</span>
+                              {t.message}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // PART 5: App Router + Root Component
 
 // ─── VIEW ERROR BOUNDARY ──────────────────────────────────────────────────────
@@ -20192,6 +20577,7 @@ function AppRouter() {
     case 'reports':         return <ReportsView />;
     case 'volume-report':   return <VolumeReportView />;
     case 'outreach':        return <OutreachView />;
+    case 'calls':           return <CallsView />;
     case 'map':             return <MapView />;
     case 'users':           return <UsersView />;
     case 'targets':         return <TargetsView />;

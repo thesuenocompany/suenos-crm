@@ -112,6 +112,16 @@ function AccountList() {
   const [fHealth, setFHealth] = useState('');
   const [showDupes, setShowDupes] = useState(false);
   const [sheetAccount, setSheetAccount] = useState(null);
+  const [showExport, setShowExport] = useState(false);
+  const [exporting, setExporting]   = useState(false);
+  const [callingBatch, setCallingBatch] = useState(false);
+  const [exportCols, setExportCols] = useState({
+    name:true, type:true, status:true, region:true, health:true,
+    contact:true, email:true, phone:true, website:false,
+    address:true, city:false, province:false, postalCode:false,
+    licenseNumber:true, liquorLicenseName:false, pstNumber:false,
+    assignedRep:true, lastVisit:true, lastOrder:false, leadSource:false, notes:false,
+  });
 
   // Respond to params passed via NAV (e.g. from chart/health card clicks)
   const [salesOnly, setSalesOnly] = useState(false);
@@ -174,9 +184,140 @@ function AccountList() {
     return groups;
   }, [state.accounts, isAdmin]);
 
+  // ── Export the filtered list (CSV / PDF) with a column picker ──
+  const repName = id => { const u = state.users.find(u=>u.id===id); return u ? u.name : ''; };
+  const EXPORT_COLUMNS = [
+    { key:'name',              label:'Name',              get:a=>a.name||'' },
+    { key:'type',              label:'Type',              get:a=>a.type||'' },
+    { key:'status',            label:'Status',            get:a=>a.status||'' },
+    { key:'region',            label:'Region',            get:a=>a.region||'' },
+    { key:'health',            label:'Health',            get:a=>healthInfo(calcHealth(a)).label },
+    { key:'contact',           label:'Contact',           get:a=>a.contact||'' },
+    { key:'email',             label:'Email',             get:a=>a.email||'' },
+    { key:'phone',             label:'Phone',             get:a=>a.phone||'' },
+    { key:'website',           label:'Website',           get:a=>a.website||'' },
+    { key:'address',           label:'Address',           get:a=>a.address||'' },
+    { key:'city',              label:'City',              get:a=>a.city||'' },
+    { key:'province',          label:'Province',          get:a=>a.province||'' },
+    { key:'postalCode',        label:'Postal Code',       get:a=>a.postalCode||'' },
+    { key:'licenseNumber',     label:'Licence #',         get:a=>a.licenseNumber||'' },
+    { key:'liquorLicenseName', label:'Liquor Licence Name', get:a=>a.liquorLicenseName||'' },
+    { key:'pstNumber',         label:'PST #',             get:a=>a.pstNumber||'' },
+    { key:'assignedRep',       label:'Assigned Rep',      get:a=>repName(a.assignedRep) },
+    { key:'lastVisit',         label:'Last Visit',        get:a=>a.lastVisit||'' },
+    { key:'lastOrder',         label:'Last Order',        get:a=>a.lastOrder||'' },
+    { key:'leadSource',        label:'Lead Source',       get:a=>a.leadSource||'' },
+    { key:'notes',             label:'Notes',             get:a=>(a.notes||'').replace(/\s+/g,' ').trim() },
+  ];
+  const selectedCols = () => EXPORT_COLUMNS.filter(c => exportCols[c.key]);
+  const filterSummary = () => [
+    q.trim() && `search "${q.trim()}"`,
+    fType && `Type: ${fType}`, fStatus && `Status: ${fStatus}`,
+    fRegion && `Region: ${fRegion}`, fHealth && `Health: ${fHealth}`,
+    salesOnly && 'With sales only',
+  ].filter(Boolean).join('  ·  ') || 'All accounts';
+
+  function exportCSV() {
+    const cols = selectedCols();
+    if (!cols.length) { showToast(dispatch, 'Pick at least one column', 'error'); return; }
+    setExporting(true);
+    try {
+      const esc = v => { const s = String(v==null?'':v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+      const csv = [cols.map(c=>esc(c.label)).join(',')]
+        .concat(filtered.map(a => cols.map(c => esc(c.get(a))).join(','))).join('\n');
+      const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const el = document.createElement('a');
+      el.href = url; el.download = `accounts_${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(el); el.click(); el.remove(); URL.revokeObjectURL(url);
+      showToast(dispatch, `Exported ${filtered.length} account${filtered.length!==1?'s':''} to CSV`);
+      setShowExport(false);
+    } catch(e) { showToast(dispatch, 'Export failed: '+e.message, 'error'); }
+    finally { setExporting(false); }
+  }
+
+  // Batch-call the filtered list with the voice agent (admin only, capped + confirmed)
+  const CALL_CAP = 25;
+  async function callFiltered() {
+    const withPhone = filtered.filter(a => a.phone);
+    if (!withPhone.length) { showToast(dispatch, 'No accounts in this list have a phone number', 'error'); return; }
+    const batch = withPhone.slice(0, CALL_CAP);
+    const extra = withPhone.length > CALL_CAP ? ` (first ${CALL_CAP} of ${withPhone.length})` : '';
+    if (!confirm(`Start voice-agent calls to ${batch.length} store${batch.length!==1?'s':''}${extra}? Calls are placed immediately via your ElevenLabs/Twilio agent.`)) return;
+    setCallingBatch(true);
+    try {
+      const r = await dbBatchCall(dispatch, batch, 'voice-outreach');
+      showToast(dispatch, `Started ${r.started} call${r.started!==1?'s':''}${r.failed?`, ${r.failed} failed`:''}${r.skipped?`, ${r.skipped} skipped`:''}`);
+    } catch(e) { showToast(dispatch, 'Batch call failed: '+(e.message||e), 'error'); }
+    finally { setCallingBatch(false); }
+  }
+
+  function exportPDF() {
+    const cols = selectedCols();
+    if (!cols.length) { showToast(dispatch, 'Pick at least one column', 'error'); return; }
+    setExporting(true);
+    try {
+      const h = s => String(s==null?'':s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+      const thead = cols.map(c=>`<th>${h(c.label)}</th>`).join('');
+      const tbody = filtered.map(a=>`<tr>${cols.map(c=>`<td>${h(c.get(a))}</td>`).join('')}</tr>`).join('');
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Accounts</title>
+<style>body{font-family:Helvetica,Arial,sans-serif;color:#1e1e1e;margin:28px;font-size:11px}
+h1{color:#0f766e;margin:0 0 2px;font-size:20px}.sub{color:#6b6b6b;font-size:11px;margin-bottom:10px}
+hr{border:none;border-top:2px solid #0d9488;margin:8px 0 12px}
+table{width:100%;border-collapse:collapse}th{background:#0f766e;color:#fff;text-align:left;padding:5px 7px;font-size:9px}
+td{border:1px solid #d7ece9;padding:4px 7px;font-size:9px}tr:nth-child(even) td{background:#f0faf8}
+@media print{@page{margin:12mm;size:landscape}}</style></head><body>
+<h1>Accounts</h1><div class="sub">${h(filtered.length)} account${filtered.length!==1?'s':''} · Filters: ${h(filterSummary())} · ${new Date().toLocaleDateString('en-CA')}</div>
+<hr><table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table></body></html>`;
+      const w = window.open('', '_blank', 'width=1000,height=760');
+      if (!w) { showToast(dispatch, 'Allow pop-ups to export the PDF', 'error'); setExporting(false); return; }
+      w.document.write(html); w.document.close(); w.focus();
+      setTimeout(()=>{ try { w.print(); } catch(_){} }, 500);
+      showToast(dispatch, `Prepared ${filtered.length} account${filtered.length!==1?'s':''} — use "Save as PDF" in the print dialog`);
+      setShowExport(false);
+    } catch(e) { showToast(dispatch, 'Export failed: '+e.message, 'error'); }
+    finally { setExporting(false); }
+  }
+
   return (
     <div className="p-4 sm:p-6 pb-24 lg:pb-6">
       {sheetAccount && <SendSellSheetModal account={sheetAccount} onClose={()=>setSheetAccount(null)} />}
+      {showExport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={()=>setShowExport(false)}>
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-auto p-5" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-base font-bold text-gray-900 dark:text-white">Export accounts</h3>
+              <button onClick={()=>setShowExport(false)} className="text-gray-400 hover:text-gray-600"><Ic n="x" cls="w-5 h-5"/></button>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">{filtered.length} account{filtered.length!==1?'s':''} match your current filters · {filterSummary()}</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Columns</p>
+              <div className="flex gap-2">
+                <button onClick={()=>setExportCols(Object.fromEntries(EXPORT_COLUMNS.map(c=>[c.key,true])))} className="text-[11px] text-teal-600 hover:underline">All</button>
+                <button onClick={()=>setExportCols(Object.fromEntries(EXPORT_COLUMNS.map(c=>[c.key,false])))} className="text-[11px] text-gray-400 hover:underline">None</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 mb-4">
+              {EXPORT_COLUMNS.map(c=>(
+                <label key={c.key} className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
+                  <input type="checkbox" checked={!!exportCols[c.key]} onChange={()=>setExportCols(s=>({...s,[c.key]:!s[c.key]}))} className="w-3.5 h-3.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500"/>
+                  <span className="text-gray-700 dark:text-gray-300">{c.label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={exportCSV} disabled={exporting}
+                className="flex-1 px-3 py-2 text-sm font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white disabled:opacity-50">
+                {exporting ? '…' : 'Download CSV'}
+              </button>
+              <button onClick={exportPDF} disabled={exporting}
+                className="flex-1 px-3 py-2 text-sm font-semibold rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-50">
+                {exporting ? '…' : 'Export PDF'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-500">{filtered.length} account{filtered.length!==1?'s':''}</p>
@@ -188,6 +329,16 @@ function AccountList() {
               {dupeGroups.length} Duplicate{dupeGroups.length!==1?'s':''}
             </button>
           )}
+          {isAdmin && (
+            <button onClick={callFiltered} disabled={callingBatch || filtered.length===0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-40 transition">
+              <Ic n="phone" cls="w-3.5 h-3.5"/> {callingBatch ? 'Calling…' : 'Call list'}
+            </button>
+          )}
+          <button onClick={()=>setShowExport(true)} disabled={filtered.length===0}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 transition">
+            <Ic n="download" cls="w-3.5 h-3.5"/> Export
+          </button>
           <Btn onClick={()=>dispatch({type:'NAV',view:'new-account'})}>
             <Ic n="plus" cls="w-4 h-4" /> New Account
           </Btn>

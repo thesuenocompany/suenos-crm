@@ -94,9 +94,18 @@ function mapAccount(r) {
     pstNumber:r.pst_number||'', pstOverride:r.pst_override||'',
     menuPlacements:r.menu_placements||{}, lastVisit:r.last_visit, lastOrder:r.last_order,
     logoUrl:r.logo_url||null, createdAt:r.created_at?.slice(0,10)||today(),
+    city:r.city||'', province:r.province||'', postalCode:r.postal_code||'', leadSource:r.lead_source||'',
     budgetTotal:r.budget_total||null, budgetPerBottle:r.budget_per_bottle||null,
     budgetPerCase:r.budget_per_case||null, budgetPctBottle:r.budget_pct_bottle||null,
     budgetPctCase:r.budget_pct_case||null };
+}
+function mapCallLog(r) {
+  return { id:r.id, conversationId:r.conversation_id||'', callSid:r.call_sid||'', agentId:r.agent_id||'',
+    accountId:r.account_id||null, campaign:r.campaign||'', phone:r.phone||'',
+    direction:r.direction||'outbound', status:r.status||'initiated', callSuccessful:r.call_successful||'',
+    summary:r.summary||'', transcript:r.transcript||null, dataCollection:r.data_collection||null,
+    evaluation:r.evaluation||null, durationSecs:r.duration_secs||null, cost:r.cost||null,
+    startedAt:r.started_at, endedAt:r.ended_at, createdAt:r.created_at };
 }
 function mapVisit(r) {
   return { id:r.id, accountId:r.account_id, date:r.date, contact:r.contact||'',
@@ -216,6 +225,8 @@ const INITIAL_STATE = {
   accountingCcOnSend: true,   // auto-send a copy to accounting whenever an invoice is emailed
   // Prospecting agent output (admin, read-only): outreach drafts + enrichment
   outreach: [], enrichment: [], licenceInfo: {},
+  // Voice-agent (ElevenLabs/Twilio) call logs
+  calls: [],
   // voice & tone brand guidelines (pasted text, stored in app_settings)
   voiceTone: '',
   // structured brand voice controls for the AI writer (stored in app_settings as JSON)
@@ -337,6 +348,8 @@ function reducer(s, a) {
     case 'SET_ACCOUNTING_EMAIL':    return {...s, accountingEmail:a.payload};
     case 'SET_ACCOUNTING_CC':       return {...s, accountingCcOnSend:a.payload};
     case 'SET_OUTREACH':            return {...s, outreach:a.payload.outreach, enrichment:a.payload.enrichment, licenceInfo:a.payload.licenceInfo};
+    case 'SET_CALLS':               return {...s, calls:a.payload};
+    case 'ADD_CALL':                return {...s, calls:[a.payload, ...s.calls]};
     case 'SET_VOICE_TONE':          return {...s, voiceTone:a.payload};
     case 'SET_VOICE_PROFILE':       return {...s, voiceProfile:a.payload};
     case 'PRICING_FETCHING':     return {...s, pricingFetching:a.payload};
@@ -480,6 +493,7 @@ async function loadAllData(dispatch) {
     try { await dbLoadMarketingAlerts(dispatch); } catch(ma) { console.warn('[MarketingAlerts] load failed:', ma); }
     // Load prospecting-agent output (admin only): outreach drafts + enrichment
     try { if (_role === 'admin') await dbLoadOutreach(dispatch); } catch(oe) { console.warn('[Outreach] load failed:', oe); }
+    try { await dbLoadCalls(dispatch); } catch(ce) { console.warn('[Calls] load failed:', ce); }
   } catch(e) {
     console.error('Data load error:', e);
   } finally {
@@ -628,6 +642,44 @@ async function dbOutreachMarkSent(dispatch, msgObjs, ctx) {
   }
   await dbLoadOutreach(dispatch);
   return { created, noted };
+}
+// ── VOICE-AGENT CALLS (ElevenLabs/Twilio) ─────────────────────
+// Load recent call logs (admin surfaces them; also used per-account).
+async function dbLoadCalls(dispatch) {
+  const { data, error } = await sb.from('call_logs').select('*').order('started_at', { ascending:false }).limit(1000);
+  if (error) { console.warn('[Calls] load failed:', error.message); return; }
+  dispatch({ type:'SET_CALLS', payload:(data||[]).map(mapCallLog) });
+}
+// Start an outbound call to one account/number via the edge function.
+async function dbStartCall(dispatch, { accountId, phone, name, campaign }) {
+  const { data, error } = await sb.functions.invoke('elevenlabs-start-call', {
+    body: { account_id: accountId || null, phone: phone || null, name: name || null, campaign: campaign || null },
+  });
+  if (error) {
+    // Surface the function's JSON error message when present
+    let msg = error.message || 'Call failed';
+    try { const ctx = await error.context?.json?.(); if (ctx?.error) msg = ctx.error + (ctx.detail ? ` — ${ctx.detail}` : ''); } catch(_){}
+    throw new Error(msg);
+  }
+  if (data && data.success) {
+    dispatch({ type:'ADD_CALL', payload: mapCallLog({
+      id:'tmp-'+(data.conversation_id||Date.now()), conversation_id:data.conversation_id, call_sid:data.callSid,
+      account_id:accountId||null, campaign:campaign||null, phone:data.to||phone, status:'initiated',
+      started_at:new Date().toISOString(),
+    }) });
+  }
+  return data;
+}
+// Start calls for a list of accounts (sequential, best-effort). Returns counts.
+async function dbBatchCall(dispatch, accounts, campaign) {
+  let started = 0, skipped = 0, failed = 0;
+  for (const a of accounts) {
+    if (!a.phone) { skipped++; continue; }
+    try { await dbStartCall(dispatch, { accountId:a.id, phone:a.phone, name:a.name, campaign }); started++; }
+    catch(_) { failed++; }
+  }
+  if (started) await dbLoadCalls(dispatch);
+  return { started, skipped, failed };
 }
 async function dbSaveAccountingSettings(dispatch, email, ccOnSend) {
   const e = (email || '').trim();

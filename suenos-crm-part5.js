@@ -62,6 +62,7 @@ function AppRouter() {
     case 'reports':         return <ReportsView />;
     case 'volume-report':   return <VolumeReportView />;
     case 'outreach':        return <OutreachView />;
+    case 'calls':           return <CallsView />;
     case 'map':             return <MapView />;
     case 'users':           return <UsersView />;
     case 'targets':         return <TargetsView />;
