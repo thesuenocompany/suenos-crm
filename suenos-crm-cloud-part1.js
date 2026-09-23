@@ -754,6 +754,20 @@ async function dbQueueProspects(dispatch, items, accounts) {
   const res = await dbCallQueueAdd(dispatch, ids);
   return { created, queued: res.added||0, eligible: ids.length, noPhone };
 }
+// Look up missing prospect phone numbers from Google Places (server-side), then
+// refresh enrichment. `licenceNumbers` should be the ones lacking a phone.
+async function dbPullGooglePhones(dispatch, licenceNumbers) {
+  const nums = (licenceNumbers||[]).filter(Boolean).slice(0,80);
+  if (!nums.length) return { updated:0 };
+  const { data, error } = await sb.functions.invoke('licence-phone-google', { body:{ licence_numbers: nums } });
+  if (error) {
+    let m = error.message || 'Lookup failed';
+    try { const c = await error.context?.json?.(); if (c?.error) m = c.error; } catch(_){}
+    throw new Error(m);
+  }
+  try { await dbLoadOutreach(dispatch); } catch(_){}
+  return data || {};
+}
 async function dbSyncCalls(dispatch, conversationId) {
   const { data, error } = await sb.functions.invoke('elevenlabs-sync-calls', {
     body: conversationId ? { conversation_id: conversationId } : {},

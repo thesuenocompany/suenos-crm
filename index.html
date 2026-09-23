@@ -999,6 +999,20 @@ async function dbQueueProspects(dispatch, items, accounts) {
   const res = await dbCallQueueAdd(dispatch, ids);
   return { created, queued: res.added||0, eligible: ids.length, noPhone };
 }
+// Look up missing prospect phone numbers from Google Places (server-side), then
+// refresh enrichment. `licenceNumbers` should be the ones lacking a phone.
+async function dbPullGooglePhones(dispatch, licenceNumbers) {
+  const nums = (licenceNumbers||[]).filter(Boolean).slice(0,80);
+  if (!nums.length) return { updated:0 };
+  const { data, error } = await sb.functions.invoke('licence-phone-google', { body:{ licence_numbers: nums } });
+  if (error) {
+    let m = error.message || 'Lookup failed';
+    try { const c = await error.context?.json?.(); if (c?.error) m = c.error; } catch(_){}
+    throw new Error(m);
+  }
+  try { await dbLoadOutreach(dispatch); } catch(_){}
+  return data || {};
+}
 async function dbSyncCalls(dispatch, conversationId) {
   const { data, error } = await sb.functions.invoke('elevenlabs-sync-calls', {
     body: conversationId ? { conversation_id: conversationId } : {},
@@ -14564,6 +14578,7 @@ function LicenseProspectsView() {
   const [showExport, setShowExport] = useState(false);
   const [exporting, setExporting]   = useState(false);
   const [queuingCall, setQueuingCall] = useState(false);
+  const [gPhones, setGPhones] = useState(false);
   const [exportCols, setExportCols] = useState({
     establishment:true, licensee:false, address:true, city:true, postal_code:false,
     region:true, licence_type:true, licence_number:true, expiry_date:true,
@@ -14860,6 +14875,28 @@ function LicenseProspectsView() {
     finally { setQueuingCall(false); }
   }
 
+  // Pull phone numbers from Google Places for filtered prospects missing one.
+  async function pullGooglePhones() {
+    setGPhones(true);
+    try {
+      const { rows } = await fetchAllFiltered();
+      const nums = rows.map(r=>r.licence_number).filter(Boolean);
+      const have = new Set();
+      for (let i=0;i<nums.length;i+=200) {
+        const { data:en } = await sb.from('license_enrichment').select('licence_number,phone').in('licence_number', nums.slice(i,i+200));
+        (en||[]).forEach(e=>{ if (e.phone && String(e.phone).trim()) have.add(e.licence_number); });
+      }
+      const missing = nums.filter(n=>!have.has(n));
+      if (!missing.length) { showToast(dispatch, 'Every prospect in this list already has a phone number'); setGPhones(false); return; }
+      const batch = missing.slice(0,80);
+      const extra = missing.length>80 ? ` (first 80 of ${missing.length})` : '';
+      if (!confirm(`Look up phone numbers from Google for ${batch.length} prospect${batch.length!==1?'s':''} without one${extra}?\nUses Google Places (billable per lookup).`)) { setGPhones(false); return; }
+      const r = await dbPullGooglePhones(dispatch, batch);
+      showToast(dispatch, `Google: found ${r.updated||0} phone${(r.updated||0)!==1?'s':''}${r.not_found?`, ${r.not_found} not found`:''}. Re-run for the rest.`);
+    } catch(e) { showToast(dispatch, 'Phone lookup failed: '+(e.message||e), 'error'); }
+    finally { setGPhones(false); }
+  }
+
   async function exportCSV() {
     const cols = selectedCols();
     if (!cols.length) { showToast(dispatch, 'Pick at least one column', 'error'); return; }
@@ -15015,6 +15052,12 @@ td{border:1px solid #e5e0f0;padding:4px 7px;font-size:9px}tr:nth-child(even) td{
         <button onClick={()=>setShowExport(v=>!v)} className={`px-3 py-1.5 text-xs rounded-lg border font-medium transition-colors ${showExport?'bg-violet-600 text-white border-violet-600':'border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20'}`}>
           ⬇ Export
         </button>
+        {isAdmin && (
+          <button onClick={pullGooglePhones} disabled={gPhones}
+            className="px-3 py-1.5 text-xs rounded-lg border font-medium border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 flex items-center gap-1">
+            {gPhones ? 'Looking up…' : '📞 Pull phones (Google)'}
+          </button>
+        )}
         {isAdmin && (
           <button onClick={addProspectsToCallQueue} disabled={queuingCall}
             className="px-3 py-1.5 text-xs rounded-lg border font-medium border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-50 flex items-center gap-1">
