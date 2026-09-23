@@ -94,7 +94,7 @@ function mapAccount(r) {
     pstNumber:r.pst_number||'', pstOverride:r.pst_override||'',
     menuPlacements:r.menu_placements||{}, lastVisit:r.last_visit, lastOrder:r.last_order,
     logoUrl:r.logo_url||null, createdAt:r.created_at?.slice(0,10)||today(),
-    city:r.city||'', province:r.province||'', postalCode:r.postal_code||'', leadSource:r.lead_source||'',
+    city:r.city||'', province:r.province||'', postalCode:r.postal_code||'', leadSource:r.lead_source||'', licenceType:r.licence_type||'',
     budgetTotal:r.budget_total||null, budgetPerBottle:r.budget_per_bottle||null,
     budgetPerCase:r.budget_per_case||null, budgetPctBottle:r.budget_pct_bottle||null,
     budgetPctCase:r.budget_pct_case||null };
@@ -726,6 +726,34 @@ async function dbSaveCallConfig(dispatch, cfg) {
   dispatch({ type:'SET_CALL_CONFIG', payload: mapCallConfig(row) });
 }
 // Pull latest results from ElevenLabs for open calls (or one conversation), then refresh.
+// Queue licence prospects for auto-calling. Creates a lightweight Prospect
+// account for any that isn't one yet (using enriched phone + licence info), then
+// adds them to the call queue. `items` = [{licence_number, establishment, city,
+// region, address, licensee, phone}]. Skips items with no phone.
+async function dbQueueProspects(dispatch, items, accounts) {
+  const norm = n => (n||'').toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();
+  const pool = (accounts||[]).slice();
+  const ids = []; let created = 0, noPhone = 0;
+  for (const it of (items||[])) {
+    if (!it.phone) { noPhone++; continue; }
+    let acc = pool.find(a => (a.licenseNumber||'') === String(it.licence_number))
+           || pool.find(a => norm(a.name) === norm(it.establishment));
+    if (!acc) {
+      const id = genId();
+      const row = { id, name: it.establishment || `Licence ${it.licence_number||''}`.trim(), type:null,
+        region: it.region||null, address: it.address||null, city: it.city||null, province:'BC',
+        phone: it.phone, status:'Prospect', liquor_license_name: it.licensee||null,
+        license_number: String(it.licence_number||'') || null, licence_type: it.licence_type||null,
+        lead_source:'Prospecting (voice)', normalized_name: norm(it.establishment) };
+      const { data:ins, error } = await sb.from('accounts').insert(row).select().single();
+      if (error) continue;
+      acc = mapAccount(ins); dispatch({ type:'ADD_ACCOUNT', payload:acc }); pool.push(acc); created++;
+    }
+    ids.push(acc.id);
+  }
+  const res = await dbCallQueueAdd(dispatch, ids);
+  return { created, queued: res.added||0, eligible: ids.length, noPhone };
+}
 async function dbSyncCalls(dispatch, conversationId) {
   const { data, error } = await sb.functions.invoke('elevenlabs-sync-calls', {
     body: conversationId ? { conversation_id: conversationId } : {},

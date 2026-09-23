@@ -20,9 +20,26 @@ function CallsView() {
   const [qAdding, setQAdding] = React.useState(false);
   React.useEffect(()=>{ if (state.callConfig) setCfg(state.callConfig); }, [state.callConfig]);
 
-  const queuePending = callQueue.filter(x=>x.status==='pending');
   const queueDone    = callQueue.filter(x=>x.status==='done');
   const queueFailed  = callQueue.filter(x=>x.status==='failed');
+  const [qRegion, setQRegion] = React.useState('');
+  const [qType, setQType]     = React.useState('');
+  const pendingAll = callQueue.filter(x=>x.status==='pending');
+  // Distinct regions / licence types present in the pending queue (for the filters)
+  const qRegions = React.useMemo(()=>[...new Set(pendingAll.map(x=>acctById[x.accountId]?.region).filter(Boolean))].sort(), [pendingAll, acctById]);
+  const qTypes   = React.useMemo(()=>[...new Set(pendingAll.map(x=>acctById[x.accountId]?.licenceType).filter(Boolean))].sort(), [pendingAll, acctById]);
+  const queuePending = pendingAll.filter(x=>{
+    const a = acctById[x.accountId];
+    if (qRegion && (a?.region||'')!==qRegion) return false;
+    if (qType && (a?.licenceType||'')!==qType) return false;
+    return true;
+  });
+  async function removeShown() {
+    if (!queuePending.length) return;
+    if (!confirm(`Remove ${queuePending.length} shown item${queuePending.length!==1?'s':''} from the queue? (They won't be called. Accounts are kept.)`)) return;
+    try { await dbCallQueueRemove(dispatch, queuePending.map(x=>x.id)); showToast(dispatch, 'Removed from queue'); }
+    catch(e){ showToast(dispatch, 'Remove failed: '+(e.message||e), 'error'); }
+  }
 
   async function saveCfg(patch) {
     const next = { ...(cfg||{ enabled:false, dailyCap:25, perRunCap:5, windowStart:15, windowEnd:20, daysMode:'all', timezone:'America/Vancouver' }), ...patch };
@@ -198,13 +215,31 @@ function CallsView() {
         )}
 
         <div className="flex items-center gap-4 text-xs mb-2">
-          <span className="text-amber-600 dark:text-amber-400 font-semibold">{queuePending.length} pending</span>
+          <span className="text-amber-600 dark:text-amber-400 font-semibold">{pendingAll.length} pending</span>
           <span className="text-emerald-600 dark:text-emerald-400">{queueDone.length} called</span>
           {queueFailed.length>0 && <span className="text-red-600">{queueFailed.length} failed</span>}
           <span className="flex-1"/>
-          <span className="text-gray-400">Add stores from Accounts → “Add to queue”, or the search above → “+ Queue”.</span>
+          <span className="text-gray-400">Add stores from Prospects or Accounts → “Add to call queue” (Type/Region filters honored), or the search above → “+ Queue”.</span>
         </div>
 
+        {pendingAll.length>0 && (qRegions.length>0 || qTypes.length>0) && (
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <select value={qRegion} onChange={e=>setQRegion(e.target.value)}
+              className="px-2 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">
+              <option value="">All regions</option>
+              {qRegions.map(r=><option key={r} value={r}>{r}</option>)}
+            </select>
+            <select value={qType} onChange={e=>setQType(e.target.value)}
+              className="px-2 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">
+              <option value="">All licence types</option>
+              {qTypes.map(t=><option key={t} value={t}>{t}</option>)}
+            </select>
+            {(qRegion||qType) && <button onClick={()=>{setQRegion('');setQType('');}} className="text-[11px] text-gray-400 hover:text-gray-600 underline">Clear</button>}
+            <span className="flex-1"/>
+            {(qRegion||qType) && queuePending.length>0 &&
+              <button onClick={removeShown} className="text-[11px] font-medium px-2 py-1 rounded-md border border-red-200 dark:border-red-800 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">Remove shown ({queuePending.length})</button>}
+          </div>
+        )}
         {queuePending.length>0 && (
           <div className="max-h-48 overflow-auto rounded-lg border border-gray-100 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
             {queuePending.slice(0,100).map(item=>{
@@ -221,7 +256,7 @@ function CallsView() {
             })}
           </div>
         )}
-        {!cfg?.enabled && queuePending.length>0 && (
+        {!cfg?.enabled && pendingAll.length>0 && (
           <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2">Auto-calling is off — turn on the toggle to start working through the queue.</p>
         )}
       </div>

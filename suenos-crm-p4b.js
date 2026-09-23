@@ -6806,6 +6806,7 @@ function LicenseProspectsView() {
   // Export (filtered list → CSV / PDF) with a column picker
   const [showExport, setShowExport] = useState(false);
   const [exporting, setExporting]   = useState(false);
+  const [queuingCall, setQueuingCall] = useState(false);
   const [exportCols, setExportCols] = useState({
     establishment:true, licensee:false, address:true, city:true, postal_code:false,
     region:true, licence_type:true, licence_number:true, expiry_date:true,
@@ -7075,6 +7076,33 @@ function LicenseProspectsView() {
     regionSel.length ? regionSel.join(', ') : (isAdmin ? 'All regions' : 'My regions'),
   ].filter(Boolean).join('  ·  ');
 
+  // Add the current filtered prospect list (Type / Region / City filters honored)
+  // to the auto-call queue. Requires an enriched phone; creates a Prospect account
+  // for each so results log somewhere.
+  const CALL_QUEUE_CAP = 200;
+  async function addProspectsToCallQueue() {
+    setQueuingCall(true);
+    try {
+      const { rows } = await fetchAllFiltered();
+      const nums = rows.map(r=>r.licence_number).filter(Boolean);
+      const phoneByLic = {};
+      for (let i=0;i<nums.length;i+=200) {
+        const { data:en } = await sb.from('license_enrichment').select('licence_number,phone').in('licence_number', nums.slice(i,i+200));
+        (en||[]).forEach(e=>{ if (e.phone) phoneByLic[e.licence_number]=e.phone; });
+      }
+      const items = rows
+        .map(l=>({ licence_number:l.licence_number, establishment:l.establishment, city:l.city, region:l.region, address:l.address, licensee:l.licensee, licence_type:l.licence_type, phone: phoneByLic[l.licence_number] }))
+        .filter(x=>x.phone);
+      if (!items.length) { showToast(dispatch, 'None of these prospects have an enriched phone number yet', 'error'); setQueuingCall(false); return; }
+      const batch = items.slice(0, CALL_QUEUE_CAP);
+      const extra = items.length>CALL_QUEUE_CAP ? ` (first ${CALL_QUEUE_CAP} of ${items.length})` : '';
+      if (!confirm(`Add ${batch.length} prospect${batch.length!==1?'s':''}${extra} with a phone number to the auto-call queue?\nFilters: ${filterSummary()}\nA Prospect account is created for each so call results are logged.`)) { setQueuingCall(false); return; }
+      const r = await dbQueueProspects(dispatch, batch, state.accounts);
+      showToast(dispatch, `Queued ${r.queued} for calling · ${r.created} new prospect account${r.created!==1?'s':''}`);
+    } catch(e) { showToast(dispatch, 'Add to queue failed: '+(e.message||e), 'error'); }
+    finally { setQueuingCall(false); }
+  }
+
   async function exportCSV() {
     const cols = selectedCols();
     if (!cols.length) { showToast(dispatch, 'Pick at least one column', 'error'); return; }
@@ -7230,6 +7258,12 @@ td{border:1px solid #e5e0f0;padding:4px 7px;font-size:9px}tr:nth-child(even) td{
         <button onClick={()=>setShowExport(v=>!v)} className={`px-3 py-1.5 text-xs rounded-lg border font-medium transition-colors ${showExport?'bg-violet-600 text-white border-violet-600':'border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20'}`}>
           ⬇ Export
         </button>
+        {isAdmin && (
+          <button onClick={addProspectsToCallQueue} disabled={queuingCall}
+            className="px-3 py-1.5 text-xs rounded-lg border font-medium border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-50 flex items-center gap-1">
+            <Ic n="phone" cls="w-3.5 h-3.5"/> {queuingCall ? 'Adding…' : 'Add to call queue'}
+          </button>
+        )}
       </div>
 
       {/* Export panel — pick columns, then CSV or PDF (exports the full filtered list) */}
