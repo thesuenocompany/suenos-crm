@@ -725,6 +725,29 @@ async function dbSaveCallConfig(dispatch, cfg) {
   if (error) throw new Error(error.message);
   dispatch({ type:'SET_CALL_CONFIG', payload: mapCallConfig(row) });
 }
+// Pull latest results from ElevenLabs for open calls (or one conversation), then refresh.
+async function dbSyncCalls(dispatch, conversationId) {
+  const { data, error } = await sb.functions.invoke('elevenlabs-sync-calls', {
+    body: conversationId ? { conversation_id: conversationId } : {},
+  });
+  if (error) {
+    let msg = error.message || 'Sync failed';
+    try { const c = await error.context?.json?.(); if (c?.error) msg = c.error; } catch(_){}
+    throw new Error(msg);
+  }
+  await dbLoadCalls(dispatch);
+  return data;
+}
+// Fetch a call recording (mp3) as an object URL for playback. Admin only.
+async function fetchCallAudioUrl(conversationId) {
+  const { data: { session } } = await sb.auth.getSession();
+  const resp = await fetch(`${SUPABASE_URL}/functions/v1/elevenlabs-call-audio?conversation_id=${encodeURIComponent(conversationId)}`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${session?.access_token || ''}` },
+  });
+  if (!resp.ok) throw new Error('No recording available yet');
+  const blob = await resp.blob();
+  return URL.createObjectURL(blob);
+}
 async function dbSaveAccountingSettings(dispatch, email, ccOnSend) {
   const e = (email || '').trim();
   dispatch({ type:'SET_ACCOUNTING_EMAIL', payload: e });

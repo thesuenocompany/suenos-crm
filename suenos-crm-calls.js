@@ -44,6 +44,23 @@ function CallsView() {
   }
   const H12 = h => { const x=((h+11)%12)+1; return `${x}${h<12?'am':'pm'}`; };
 
+  const [syncing, setSyncing] = React.useState(false);
+  async function syncNow() {
+    setSyncing(true);
+    try { const r = await dbSyncCalls(dispatch); showToast(dispatch, 'Calls refreshed'+(r&&r.completed?` · ${r.completed} completed`:'')); }
+    catch(e){ showToast(dispatch, 'Sync failed: '+(e.message||e), 'error'); }
+    finally { setSyncing(false); }
+  }
+  const [audio, setAudio] = React.useState({});   // callId -> { loading|url|error }
+  async function playAudio(c) {
+    if (audio[c.id]?.url) return;
+    setAudio(a=>({ ...a, [c.id]:{ loading:true } }));
+    try { const url = await fetchCallAudioUrl(c.conversationId); setAudio(a=>({ ...a, [c.id]:{ url } })); }
+    catch(e){ setAudio(a=>({ ...a, [c.id]:{ error:e.message } })); showToast(dispatch, e.message||'No recording', 'error'); }
+  }
+  // Keep the list fresh while the screen is open (calls resolve via server sync).
+  React.useEffect(()=>{ const t=setInterval(()=>{ dbLoadCalls(dispatch); }, 20000); return ()=>clearInterval(t); }, []);
+
   const acctById = React.useMemo(() => Object.fromEntries(accounts.map(a=>[a.id,a])), [accounts]);
   const fmtDT = d => d ? new Date(d).toLocaleString('en-CA',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
   const fmtDur = s => s==null ? '' : `${Math.floor(s/60)}m ${s%60}s`;
@@ -212,7 +229,13 @@ function CallsView() {
       {/* Recent calls */}
       <div className="flex items-center justify-between mb-2">
         <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Recent calls <span className="text-gray-400 font-normal">({calls.length})</span></p>
-        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Filter…" className={`${inputCls} py-1.5 text-xs`} />
+        <div className="flex items-center gap-2">
+          <button onClick={syncNow} disabled={syncing}
+            className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50">
+            {syncing ? 'Syncing…' : '↻ Sync now'}
+          </button>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Filter…" className={`${inputCls} py-1.5 text-xs`} />
+        </div>
       </div>
 
       {filtered.length === 0 ? (
@@ -242,15 +265,27 @@ function CallsView() {
                     </p>
                     {c.summary && <p className="text-xs text-gray-600 dark:text-gray-300 mt-1.5 line-clamp-2">{c.summary}</p>}
                   </div>
-                  {(tr.length>0 || dc.length>0) && (
+                  {(tr.length>0 || dc.length>0 || c.conversationId) && (
                     <button onClick={()=>setOpen(o=>({...o,[c.id]:!o[c.id]}))}
                       className="text-xs font-medium text-teal-600 hover:text-teal-700 whitespace-nowrap flex-shrink-0">
-                      {isOpen ? 'Hide' : 'Transcript'}
+                      {isOpen ? 'Hide' : 'Details'}
                     </button>
                   )}
                 </div>
                 {isOpen && (
                   <div className="border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 p-4 space-y-3">
+                    {c.conversationId && (
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase text-gray-400 mb-1">Recording</p>
+                        {audio[c.id]?.url
+                          ? <audio controls src={audio[c.id].url} className="w-full h-9" />
+                          : <button onClick={()=>playAudio(c)} disabled={audio[c.id]?.loading}
+                              className="text-xs font-medium px-2.5 py-1 rounded-md border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-50">
+                              {audio[c.id]?.loading ? 'Loading…' : '▶ Play recording'}
+                            </button>}
+                        {audio[c.id]?.error && <span className="text-[11px] text-gray-400 ml-2">{audio[c.id].error}</span>}
+                      </div>
+                    )}
                     {dc.length>0 && (
                       <div>
                         <p className="text-[10px] font-semibold uppercase text-gray-400 mb-1">Captured</p>
