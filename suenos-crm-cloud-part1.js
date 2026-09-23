@@ -225,8 +225,8 @@ const INITIAL_STATE = {
   accountingCcOnSend: true,   // auto-send a copy to accounting whenever an invoice is emailed
   // Prospecting agent output (admin, read-only): outreach drafts + enrichment
   outreach: [], enrichment: [], licenceInfo: {},
-  // Voice-agent (ElevenLabs/Twilio) call logs
-  calls: [],
+  // Voice-agent (ElevenLabs/Twilio) call logs + auto-call queue/config
+  calls: [], callQueue: [], callConfig: null,
   // voice & tone brand guidelines (pasted text, stored in app_settings)
   voiceTone: '',
   // structured brand voice controls for the AI writer (stored in app_settings as JSON)
@@ -350,6 +350,8 @@ function reducer(s, a) {
     case 'SET_OUTREACH':            return {...s, outreach:a.payload.outreach, enrichment:a.payload.enrichment, licenceInfo:a.payload.licenceInfo};
     case 'SET_CALLS':               return {...s, calls:a.payload};
     case 'ADD_CALL':                return {...s, calls:[a.payload, ...s.calls]};
+    case 'SET_CALL_QUEUE':          return {...s, callQueue:a.payload};
+    case 'SET_CALL_CONFIG':         return {...s, callConfig:a.payload};
     case 'SET_VOICE_TONE':          return {...s, voiceTone:a.payload};
     case 'SET_VOICE_PROFILE':       return {...s, voiceProfile:a.payload};
     case 'PRICING_FETCHING':     return {...s, pricingFetching:a.payload};
@@ -494,6 +496,7 @@ async function loadAllData(dispatch) {
     // Load prospecting-agent output (admin only): outreach drafts + enrichment
     try { if (_role === 'admin') await dbLoadOutreach(dispatch); } catch(oe) { console.warn('[Outreach] load failed:', oe); }
     try { await dbLoadCalls(dispatch); } catch(ce) { console.warn('[Calls] load failed:', ce); }
+    try { if (_role === 'admin') await dbLoadCallQueue(dispatch); } catch(cq) { console.warn('[CallQueue] load failed:', cq); }
   } catch(e) {
     console.error('Data load error:', e);
   } finally {
@@ -680,6 +683,47 @@ async function dbBatchCall(dispatch, accounts, campaign) {
   }
   if (started) await dbLoadCalls(dispatch);
   return { started, skipped, failed };
+}
+function mapCallQueue(r) {
+  return { id:r.id, accountId:r.account_id, status:r.status||'pending', priority:r.priority||0,
+    attempts:r.attempts||0, conversationId:r.conversation_id||'', error:r.error||'',
+    addedAt:r.added_at, lastAttemptAt:r.last_attempt_at };
+}
+function mapCallConfig(r) {
+  return r ? { enabled:!!r.enabled, dailyCap:r.daily_cap, perRunCap:r.per_run_cap,
+    windowStart:r.window_start, windowEnd:r.window_end, daysMode:r.days_mode||'all',
+    timezone:r.timezone||'America/Vancouver' } : null;
+}
+async function dbLoadCallQueue(dispatch) {
+  const [{ data:q }, { data:cfg }] = await Promise.all([
+    sb.from('call_queue').select('*').order('added_at', { ascending:false }).limit(2000),
+    sb.from('call_config').select('*').eq('id',1).maybeSingle(),
+  ]);
+  dispatch({ type:'SET_CALL_QUEUE', payload:(q||[]).map(mapCallQueue) });
+  dispatch({ type:'SET_CALL_CONFIG', payload: mapCallConfig(cfg) });
+}
+async function dbCallQueueAdd(dispatch, accountIds) {
+  const ids = (accountIds||[]).filter(Boolean);
+  if (!ids.length) return { added:0 };
+  const { data, error } = await sb.rpc('call_queue_add', { p_ids: ids });
+  if (error) throw new Error(error.message);
+  await dbLoadCallQueue(dispatch);
+  return data || { added:0 };
+}
+async function dbCallQueueRemove(dispatch, ids) {
+  const list = (Array.isArray(ids)?ids:[ids]).filter(Boolean);
+  if (!list.length) return;
+  const { error } = await sb.from('call_queue').delete().in('id', list);
+  if (error) throw new Error(error.message);
+  await dbLoadCallQueue(dispatch);
+}
+async function dbSaveCallConfig(dispatch, cfg) {
+  const row = { id:1, enabled:!!cfg.enabled, daily_cap:cfg.dailyCap, per_run_cap:cfg.perRunCap,
+    window_start:cfg.windowStart, window_end:cfg.windowEnd, days_mode:cfg.daysMode,
+    timezone:cfg.timezone, updated_at:new Date().toISOString() };
+  const { error } = await sb.from('call_config').upsert(row, { onConflict:'id' });
+  if (error) throw new Error(error.message);
+  dispatch({ type:'SET_CALL_CONFIG', payload: mapCallConfig(row) });
 }
 async function dbSaveAccountingSettings(dispatch, email, ccOnSend) {
   const e = (email || '').trim();

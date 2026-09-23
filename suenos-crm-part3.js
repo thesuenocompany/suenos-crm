@@ -252,6 +252,19 @@ function AccountList() {
     finally { setCallingBatch(false); }
   }
 
+  const [queuing, setQueuing] = useState(false);
+  async function addFilteredToQueue() {
+    const withPhone = filtered.filter(a => a.phone);
+    if (!withPhone.length) { showToast(dispatch, 'No accounts in this list have a phone number', 'error'); return; }
+    if (!confirm(`Add ${withPhone.length} store${withPhone.length!==1?'s':''} (those with a phone) to the auto-call queue?`)) return;
+    setQueuing(true);
+    try {
+      const r = await dbCallQueueAdd(dispatch, withPhone.map(a=>a.id));
+      showToast(dispatch, `Added ${r.added||0} to the call queue${(r.added||0)<withPhone.length?` (${withPhone.length-(r.added||0)} already queued)`:''}`);
+    } catch(e) { showToast(dispatch, 'Add to queue failed: '+(e.message||e), 'error'); }
+    finally { setQueuing(false); }
+  }
+
   function exportPDF() {
     const cols = selectedCols();
     if (!cols.length) { showToast(dispatch, 'Pick at least one column', 'error'); return; }
@@ -330,9 +343,15 @@ td{border:1px solid #d7ece9;padding:4px 7px;font-size:9px}tr:nth-child(even) td{
             </button>
           )}
           {isAdmin && (
-            <button onClick={callFiltered} disabled={callingBatch || filtered.length===0}
+            <button onClick={addFilteredToQueue} disabled={queuing || filtered.length===0}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-40 transition">
-              <Ic n="phone" cls="w-3.5 h-3.5"/> {callingBatch ? 'Calling…' : 'Call list'}
+              <Ic n="phone" cls="w-3.5 h-3.5"/> {queuing ? 'Adding…' : 'Add to call queue'}
+            </button>
+          )}
+          {isAdmin && (
+            <button onClick={callFiltered} disabled={callingBatch || filtered.length===0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 transition">
+              <Ic n="phone" cls="w-3.5 h-3.5"/> {callingBatch ? 'Calling…' : 'Call now'}
             </button>
           )}
           <button onClick={()=>setShowExport(true)} disabled={filtered.length===0}

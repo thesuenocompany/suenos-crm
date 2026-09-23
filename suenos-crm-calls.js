@@ -14,6 +14,35 @@ function CallsView() {
   const [calling, setCalling] = React.useState(false);
   const [q, setQ]             = React.useState('');       // filter the call list
   const [open, setOpen]       = React.useState({});       // expanded transcripts
+  const callQueue = state.callQueue || [];
+  const [cfg, setCfg]         = React.useState(null);     // editable copy of call config
+  const [savingCfg, setSavingCfg] = React.useState(false);
+  const [qAdding, setQAdding] = React.useState(false);
+  React.useEffect(()=>{ if (state.callConfig) setCfg(state.callConfig); }, [state.callConfig]);
+
+  const queuePending = callQueue.filter(x=>x.status==='pending');
+  const queueDone    = callQueue.filter(x=>x.status==='done');
+  const queueFailed  = callQueue.filter(x=>x.status==='failed');
+
+  async function saveCfg(patch) {
+    const next = { ...(cfg||{ enabled:false, dailyCap:25, perRunCap:5, windowStart:15, windowEnd:20, daysMode:'all', timezone:'America/Vancouver' }), ...patch };
+    setCfg(next); setSavingCfg(true);
+    try { await dbSaveCallConfig(dispatch, next); showToast(dispatch, 'Auto-call settings saved'); }
+    catch(e){ showToast(dispatch, 'Save failed: '+(e.message||e), 'error'); }
+    finally { setSavingCfg(false); }
+  }
+  async function addToQueue(acc) {
+    if (!acc) return;
+    setQAdding(true);
+    try { const r = await dbCallQueueAdd(dispatch, [acc.id]); showToast(dispatch, r.added ? `${acc.name} added to the call queue` : `${acc.name} is already queued or has no phone`); setPicked(null); setPick(''); }
+    catch(e){ showToast(dispatch, 'Add failed: '+(e.message||e), 'error'); }
+    finally { setQAdding(false); }
+  }
+  async function removeFromQueue(id) {
+    try { await dbCallQueueRemove(dispatch, [id]); }
+    catch(e){ showToast(dispatch, 'Remove failed: '+(e.message||e), 'error'); }
+  }
+  const H12 = h => { const x=((h+11)%12)+1; return `${x}${h<12?'am':'pm'}`; };
 
   const acctById = React.useMemo(() => Object.fromEntries(accounts.map(a=>[a.id,a])), [accounts]);
   const fmtDT = d => d ? new Date(d).toLocaleString('en-CA',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
@@ -97,9 +126,87 @@ function CallsView() {
             className="px-4 py-2 text-sm font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white disabled:opacity-40 flex items-center gap-1.5">
             <Ic n="phone" cls="w-4 h-4"/> {calling ? 'Starting…' : picked ? `Call ${picked.name}` : 'Pick an account'}
           </button>
+          <button onClick={()=>addToQueue(picked)} disabled={!picked || qAdding}
+            className="px-3 py-2 text-sm font-medium rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-40">
+            {qAdding ? '…' : '+ Queue'}
+          </button>
           {picked && <span className="text-xs text-gray-500">{picked.phone}</span>}
         </div>
         <p className="text-[11px] text-gray-400 mt-2">Calls are placed by your ElevenLabs agent over Twilio. Results appear below and on the account once the call ends.</p>
+      </div>
+
+      {/* Auto-call queue */}
+      <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 p-4 mb-5">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div>
+            <p className="text-sm font-bold text-gray-900 dark:text-white">Auto-call queue</p>
+            <p className="text-xs text-gray-500">The system works through the queue on its own during your calling window.</p>
+          </div>
+          <button onClick={()=>saveCfg({ enabled: !(cfg&&cfg.enabled) })} disabled={savingCfg}
+            className={`relative w-12 h-6 rounded-full transition flex-shrink-0 ${cfg&&cfg.enabled ? 'bg-teal-600' : 'bg-gray-300 dark:bg-gray-600'}`}
+            title={cfg&&cfg.enabled ? 'Auto-calling is ON' : 'Auto-calling is OFF'}>
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${cfg&&cfg.enabled ? 'translate-x-6' : ''}`}/>
+          </button>
+        </div>
+
+        {cfg && (
+          <div className="flex flex-wrap items-end gap-3 mb-3">
+            <label className="text-xs text-gray-500">Per day
+              <select value={cfg.dailyCap} onChange={e=>saveCfg({ dailyCap:Number(e.target.value) })}
+                className="block mt-0.5 px-2 py-1 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                {[10,25,50,100,150].map(n=><option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-gray-500">From
+              <select value={cfg.windowStart} onChange={e=>saveCfg({ windowStart:Number(e.target.value) })}
+                className="block mt-0.5 px-2 py-1 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                {Array.from({length:24},(_,h)=><option key={h} value={h}>{H12(h)}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-gray-500">To
+              <select value={cfg.windowEnd} onChange={e=>saveCfg({ windowEnd:Number(e.target.value) })}
+                className="block mt-0.5 px-2 py-1 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                {Array.from({length:24},(_,h)=><option key={h} value={h}>{H12(h)}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-gray-500">Days
+              <select value={cfg.daysMode} onChange={e=>saveCfg({ daysMode:e.target.value })}
+                className="block mt-0.5 px-2 py-1 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                <option value="all">Every day</option>
+                <option value="weekdays">Weekdays only</option>
+              </select>
+            </label>
+            <span className="text-xs text-gray-400 pb-1">Pacific time</span>
+          </div>
+        )}
+
+        <div className="flex items-center gap-4 text-xs mb-2">
+          <span className="text-amber-600 dark:text-amber-400 font-semibold">{queuePending.length} pending</span>
+          <span className="text-emerald-600 dark:text-emerald-400">{queueDone.length} called</span>
+          {queueFailed.length>0 && <span className="text-red-600">{queueFailed.length} failed</span>}
+          <span className="flex-1"/>
+          <span className="text-gray-400">Add stores from Accounts → “Add to queue”, or the search above → “+ Queue”.</span>
+        </div>
+
+        {queuePending.length>0 && (
+          <div className="max-h-48 overflow-auto rounded-lg border border-gray-100 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
+            {queuePending.slice(0,100).map(item=>{
+              const a = acctById[item.accountId];
+              return (
+                <div key={item.id} className="flex items-center justify-between gap-2 px-3 py-1.5 text-sm">
+                  <span className="truncate text-gray-800 dark:text-gray-200">{a ? a.name : item.accountId}</span>
+                  <span className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-xs text-gray-400">{a?.phone||''}</span>
+                    <button onClick={()=>removeFromQueue(item.id)} className="text-gray-400 hover:text-red-600" title="Remove from queue"><Ic n="x" cls="w-4 h-4"/></button>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {!cfg?.enabled && queuePending.length>0 && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2">Auto-calling is off — turn on the toggle to start working through the queue.</p>
+        )}
       </div>
 
       {/* Recent calls */}
