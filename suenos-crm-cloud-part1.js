@@ -742,6 +742,7 @@ async function dbQueueProspects(dispatch, items, accounts) {
       const id = genId();
       const row = { id, name: it.establishment || `Licence ${it.licence_number||''}`.trim(), type:null,
         region: it.region||null, address: it.address||null, city: it.city||null, province:'BC',
+        lat: it.lat!=null?it.lat:null, lng: it.lng!=null?it.lng:null, website: it.website||null,
         phone: it.phone, status:'Prospect', liquor_license_name: it.licensee||null,
         license_number: String(it.licence_number||'') || null, licence_type: it.licence_type||null,
         lead_source:'Prospecting (voice)', normalized_name: norm(it.establishment) };

@@ -7083,23 +7083,40 @@ function LicenseProspectsView() {
   // to the auto-call queue. Requires an enriched phone; creates a Prospect account
   // for each so results log somewhere.
   const CALL_QUEUE_CAP = 200;
+  // Read enrichment (phone/address/location/website) for a set of licences.
+  async function loadEnrichment(nums) {
+    const by = {};
+    for (let i=0;i<nums.length;i+=200) {
+      const { data:en } = await sb.from('license_enrichment')
+        .select('licence_number,phone,formatted_address,latitude,longitude,website')
+        .in('licence_number', nums.slice(i,i+200));
+      (en||[]).forEach(e=>{ by[e.licence_number]=e; });
+    }
+    return by;
+  }
   async function addProspectsToCallQueue() {
+    const rows = selected.size ? licences.filter(l=>selected.has(l.licence_number)) : (await fetchAllFiltered()).rows;
+    if (!rows.length) { showToast(dispatch, 'No prospects to queue', 'error'); return; }
+    const src = selected.size ? `Selected: ${selected.size}` : `Filters: ${filterSummary()}`;
+    if (!confirm(`Add up to ${rows.length} prospect${rows.length!==1?'s':''} to the auto-call queue?\n${src}\nProspects missing a phone are looked up on Google first (billable). A Prospect account is created for each so call results are logged.`)) return;
     setQueuingCall(true);
     try {
-      const rows = selected.size ? licences.filter(l=>selected.has(l.licence_number)) : (await fetchAllFiltered()).rows;
       const nums = rows.map(r=>r.licence_number).filter(Boolean);
-      const phoneByLic = {};
-      for (let i=0;i<nums.length;i+=200) {
-        const { data:en } = await sb.from('license_enrichment').select('licence_number,phone').in('licence_number', nums.slice(i,i+200));
-        (en||[]).forEach(e=>{ if (e.phone) phoneByLic[e.licence_number]=e.phone; });
+      let enr = await loadEnrichment(nums);
+      // Auto-fill missing phones from Google, then re-read.
+      const missing = nums.filter(n=>!(enr[n]?.phone && String(enr[n].phone).trim()));
+      if (missing.length) {
+        showToast(dispatch, `Looking up ${Math.min(missing.length,80)} phone number${missing.length!==1?'s':''} from Google…`);
+        await dbPullGooglePhones(dispatch, missing.slice(0,80));
+        enr = await loadEnrichment(nums);
       }
-      const items = rows
-        .map(l=>({ licence_number:l.licence_number, establishment:l.establishment, city:l.city, region:l.region, address:l.address, licensee:l.licensee, licence_type:l.licence_type, phone: phoneByLic[l.licence_number] }))
-        .filter(x=>x.phone);
-      if (!items.length) { showToast(dispatch, 'None of these prospects have an enriched phone number yet', 'error'); setQueuingCall(false); return; }
+      const items = rows.map(l=>{ const e=enr[l.licence_number]||{}; return {
+        licence_number:l.licence_number, establishment:l.establishment, city:l.city, region:l.region,
+        licensee:l.licensee, licence_type:l.licence_type,
+        address: e.formatted_address || l.address, lat: e.latitude, lng: e.longitude, website: e.website,
+        phone: e.phone }; }).filter(x=>x.phone);
+      if (!items.length) { showToast(dispatch, 'No phone numbers found for these prospects, even after a Google lookup.', 'error'); setQueuingCall(false); return; }
       const batch = items.slice(0, CALL_QUEUE_CAP);
-      const extra = items.length>CALL_QUEUE_CAP ? ` (first ${CALL_QUEUE_CAP} of ${items.length})` : '';
-      if (!confirm(`Add ${batch.length} prospect${batch.length!==1?'s':''}${extra} with a phone number to the auto-call queue?\n${selected.size?`Selected: ${selected.size}`:`Filters: ${filterSummary()}`}\nA Prospect account is created for each so call results are logged.`)) { setQueuingCall(false); return; }
       const r = await dbQueueProspects(dispatch, batch, state.accounts);
       showToast(dispatch, `Queued ${r.queued} for calling · ${r.created} new prospect account${r.created!==1?'s':''}`);
       setSelected(new Set());
