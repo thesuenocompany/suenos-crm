@@ -4887,6 +4887,7 @@ function AccountList() {
   const [fStatus, setFStatus] = useState('');
   const [fRegion, setFRegion] = useState('');
   const [fHealth, setFHealth] = useState('');
+  const [fRep, setFRep] = useState('');
   const [showDupes, setShowDupes] = useState(false);
   const [sheetAccount, setSheetAccount] = useState(null);
   const [showExport, setShowExport] = useState(false);
@@ -4924,12 +4925,13 @@ function AccountList() {
       .filter(a => !fType   || a.type===fType)
       .filter(a => !fStatus || a.status===fStatus)
       .filter(a => !fRegion || a.region===fRegion)
+      .filter(a => !fRep || (fRep==='__none__' ? !a.assignedRep : a.assignedRep===fRep))
       .filter(a => {
         if (!fHealth) return true;
         return healthInfo(calcHealth(a)).label===fHealth;
       })
       .sort((a,b)=>a.name.localeCompare(b.name));
-  }, [state.accounts, q, fType, fStatus, fRegion, fHealth, state.user, salesOnly, accountsWithSales]);
+  }, [state.accounts, q, fType, fStatus, fRegion, fHealth, fRep, state.user, salesOnly, accountsWithSales]);
 
   // Find duplicate groups — pairs/groups with similar names
   const dupeGroups = useMemo(() => {
@@ -5184,6 +5186,16 @@ td{border:1px solid #d7ece9;padding:4px 7px;font-size:9px}tr:nth-child(even) td{
               {f.opts.map(o=><option key={o} value={o}>{o}</option>)}
             </select>
           ))}
+          {isAdmin && (
+            <select value={fRep} onChange={e=>setFRep(e.target.value)}
+              className="flex-shrink-0 px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-teal-400">
+              <option value="">Rep</option>
+              {state.users.filter(u=>u.role==='rep').sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(u=>(
+                <option key={u.id} value={u.id}>{u.name||u.email}</option>
+              ))}
+              <option value="__none__">— Unassigned —</option>
+            </select>
+          )}
         </div>
       </div>
 
