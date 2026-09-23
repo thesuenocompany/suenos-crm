@@ -14579,6 +14579,8 @@ function LicenseProspectsView() {
   const [exporting, setExporting]   = useState(false);
   const [queuingCall, setQueuingCall] = useState(false);
   const [gPhones, setGPhones] = useState(false);
+  const [selected, setSelected] = useState(()=>new Set());  // hand-picked licence numbers
+  const toggleSel = ln => setSelected(s=>{ const n=new Set(s); n.has(ln)?n.delete(ln):n.add(ln); return n; });
   const [exportCols, setExportCols] = useState({
     establishment:true, licensee:false, address:true, city:true, postal_code:false,
     region:true, licence_type:true, licence_number:true, expiry_date:true,
@@ -14855,7 +14857,7 @@ function LicenseProspectsView() {
   async function addProspectsToCallQueue() {
     setQueuingCall(true);
     try {
-      const { rows } = await fetchAllFiltered();
+      const rows = selected.size ? licences.filter(l=>selected.has(l.licence_number)) : (await fetchAllFiltered()).rows;
       const nums = rows.map(r=>r.licence_number).filter(Boolean);
       const phoneByLic = {};
       for (let i=0;i<nums.length;i+=200) {
@@ -14868,9 +14870,10 @@ function LicenseProspectsView() {
       if (!items.length) { showToast(dispatch, 'None of these prospects have an enriched phone number yet', 'error'); setQueuingCall(false); return; }
       const batch = items.slice(0, CALL_QUEUE_CAP);
       const extra = items.length>CALL_QUEUE_CAP ? ` (first ${CALL_QUEUE_CAP} of ${items.length})` : '';
-      if (!confirm(`Add ${batch.length} prospect${batch.length!==1?'s':''}${extra} with a phone number to the auto-call queue?\nFilters: ${filterSummary()}\nA Prospect account is created for each so call results are logged.`)) { setQueuingCall(false); return; }
+      if (!confirm(`Add ${batch.length} prospect${batch.length!==1?'s':''}${extra} with a phone number to the auto-call queue?\n${selected.size?`Selected: ${selected.size}`:`Filters: ${filterSummary()}`}\nA Prospect account is created for each so call results are logged.`)) { setQueuingCall(false); return; }
       const r = await dbQueueProspects(dispatch, batch, state.accounts);
       showToast(dispatch, `Queued ${r.queued} for calling · ${r.created} new prospect account${r.created!==1?'s':''}`);
+      setSelected(new Set());
     } catch(e) { showToast(dispatch, 'Add to queue failed: '+(e.message||e), 'error'); }
     finally { setQueuingCall(false); }
   }
@@ -14879,8 +14882,7 @@ function LicenseProspectsView() {
   async function pullGooglePhones() {
     setGPhones(true);
     try {
-      const { rows } = await fetchAllFiltered();
-      const nums = rows.map(r=>r.licence_number).filter(Boolean);
+      const nums = selected.size ? [...selected] : (await fetchAllFiltered()).rows.map(r=>r.licence_number).filter(Boolean);
       const have = new Set();
       for (let i=0;i<nums.length;i+=200) {
         const { data:en } = await sb.from('license_enrichment').select('licence_number,phone').in('licence_number', nums.slice(i,i+200));
@@ -15055,13 +15057,19 @@ td{border:1px solid #e5e0f0;padding:4px 7px;font-size:9px}tr:nth-child(even) td{
         {isAdmin && (
           <button onClick={pullGooglePhones} disabled={gPhones}
             className="px-3 py-1.5 text-xs rounded-lg border font-medium border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 flex items-center gap-1">
-            {gPhones ? 'Looking up…' : '📞 Pull phones (Google)'}
+            {gPhones ? 'Looking up…' : (selected.size ? `📞 Pull phones for ${selected.size}` : '📞 Pull phones (Google)')}
           </button>
         )}
         {isAdmin && (
           <button onClick={addProspectsToCallQueue} disabled={queuingCall}
             className="px-3 py-1.5 text-xs rounded-lg border font-medium border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-50 flex items-center gap-1">
-            <Ic n="phone" cls="w-3.5 h-3.5"/> {queuingCall ? 'Adding…' : 'Add to call queue'}
+            <Ic n="phone" cls="w-3.5 h-3.5"/> {queuingCall ? 'Adding…' : (selected.size ? `Add ${selected.size} to call queue` : 'Add to call queue')}
+          </button>
+        )}
+        {isAdmin && selected.size>0 && (
+          <button onClick={()=>setSelected(new Set())}
+            className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800">
+            Clear ({selected.size})
           </button>
         )}
       </div>
@@ -15117,8 +15125,12 @@ td{border:1px solid #e5e0f0;padding:4px 7px;font-size:9px}tr:nth-child(even) td{
             </div>
           )}
           {visible.map(lic=>(
-            <Card key={lic.licence_number} cls="p-3">
+            <Card key={lic.licence_number} cls={`p-3 ${selected.has(lic.licence_number)?'ring-2 ring-teal-400':''}`}>
               <div className="flex items-start gap-3">
+                {isAdmin && (
+                  <input type="checkbox" checked={selected.has(lic.licence_number)} onChange={()=>toggleSel(lic.licence_number)}
+                    className="mt-1 w-4 h-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 flex-shrink-0" title="Select"/>
+                )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
                     <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{lic.establishment||lic.licensee||'—'}</p>
