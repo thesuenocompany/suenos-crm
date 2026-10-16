@@ -3384,6 +3384,19 @@ function AdminDashboard() {
     (!fRegion || accInRegion(accById(o.accountId)))
   ), [orders, startMonth, endMonth, fRep, fRegion, accounts]);
 
+  // Cold outreach emails sent (honors date range + region; not rep-specific)
+  const _outreach = state.outreach || [];
+  const _licInfo  = state.licenceInfo || {};
+  const fColdEmails = useMemo(()=> _outreach.filter(m=>{
+    const wasSent = m.sent_at || ['sent','replied','opened'].includes(m.status);
+    if (!wasSent) return false;
+    const day = (m.sent_at||'').slice(0,10);
+    if (day) { if (!inDateRangeDay(day)) return false; }
+    else if (fRange!=='all') return false;
+    if (fRegion && (_licInfo[m.licence_number]?.region) !== fRegion) return false;
+    return true;
+  }), [_outreach, startMonth, endMonth, startDay, endDay, fRegion, fRange, _licInfo]);
+
   // ── Previous period (same length, immediately before current window) ──────────
   const { prevStartMonth, prevEndMonth, prevLabel } = useMemo(()=>{
     const toDate = ym => new Date(ym+'-01');
@@ -3612,11 +3625,12 @@ function AdminDashboard() {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard label="Visits" value={fVisits.length} sub={rangeLabel} icon="visits" color="blue" onClick={()=>dispatch({type:'NAV',view:'visits'})} trend={trendVisits}/>
         <StatCard label="Bottles" value={totalBottles} sub={rangeLabel} icon="products" color="amber" onClick={()=>dispatch({type:'NAV',view:'orders'})} trend={trendBottles}/>
         <StatCard label="Revenue" value={fmtCurrency(totalRevenue)} sub={rangeLabel} icon="reports" color="emerald" onClick={()=>dispatch({type:'NAV',view:'reports'})} trend={trendRevenue}/>
         <StatCard label="Active Accounts" value={activeAccounts.length} sub={fRegion||'All regions'} icon="accounts" color="purple" onClick={()=>dispatch({type:'NAV',view:'accounts'})} trend={trendAccounts}/>
+        <StatCard label="Cold Emails" value={fColdEmails.length} sub={rangeLabel} icon="mail" color="teal" onClick={()=>dispatch({type:'NAV',view:'outreach'})}/>
       </div>
 
       {/* Charts row */}
@@ -13363,6 +13377,53 @@ function AdPerformanceView() {
     }
   }
 
+  // ── Import existing campaigns straight from Meta Ads Manager ───────────────
+  const [showImport, setShowImport]   = useState(false);
+  const [impAccts, setImpAccts]       = useState([]);          // [{id,name}]
+  const [impAcct, setImpAcct]         = useState(ACT);
+  const [impList, setImpList]         = useState([]);          // [{id,name,status,created}]
+  const [impSel, setImpSel]           = useState(()=>new Set());
+  const [impLoading, setImpLoading]   = useState(false);
+  const [importing, setImporting]     = useState(false);
+  const existingCampIds = new Set((state.metaCampaigns||[]).map(c=>String(c.campaignId)));
+
+  async function loadImportCampaigns(act) {
+    setImpLoading(true); setImpList([]); setImpSel(new Set());
+    try {
+      const all = []; let path = `${act}/campaigns?fields=name,status,effective_status,created_time,objective&limit=200`;
+      for (let i=0;i<6;i++) {
+        const res = await metaGet(path);
+        (res.data||[]).forEach(c=>all.push(c));
+        const after = res.paging?.cursors?.after;
+        if (!after || (res.data||[]).length < 200) break;
+        path = `${act}/campaigns?fields=name,status,effective_status,created_time,objective&limit=200&after=${after}`;
+      }
+      all.sort((a,b)=> String(b.created_time||'').localeCompare(String(a.created_time||'')));
+      setImpList(all.map(c=>({ id:c.id, name:c.name||c.id, status:c.effective_status||c.status||'', created:(c.created_time||'').slice(0,10) })));
+    } catch(e) { showToast(dispatch, 'Meta load failed: '+(e.message||e), 'error'); }
+    finally { setImpLoading(false); }
+  }
+  async function openImport() {
+    if (!token) { showToast(dispatch, 'Add your Meta token in Settings first', 'error'); return; }
+    setShowImport(true);
+    try { const acc = await metaGet('me/adaccounts?fields=account_id,name,id&limit=200'); setImpAccts((acc.data||[]).map(a=>({ id:a.id, name:a.name||a.id }))); } catch(_) {}
+    await loadImportCampaigns(impAcct);
+  }
+  async function doImport() {
+    const sel = impList.filter(c => impSel.has(c.id) && !existingCampIds.has(String(c.id)));
+    if (!sel.length) { showToast(dispatch, 'Pick at least one new campaign', 'error'); return; }
+    setImporting(true);
+    try {
+      for (const c of sel) {
+        await dbSaveMetaCampaign(dispatch, { id: genId(), campaignId: c.id, adsetId:null, adId:null, city: c.name, clusterId:null, createdBy: state.user?.id, platform:'meta' });
+      }
+      showToast(dispatch, `Imported ${sel.length} campaign${sel.length>1?'s':''} — pulling metrics…`);
+      setShowImport(false);
+      try { await refreshAll(); } catch(_){}
+    } catch(e) { showToast(dispatch, 'Import failed: '+(e.message||e), 'error'); }
+    finally { setImporting(false); }
+  }
+
   async function loadAdSets(c) {
     if (!token) { showToast(dispatch, 'No Meta token', 'error'); return; }
     setAdSetsLoading(s=>({...s,[c.id]:true}));
@@ -13622,6 +13683,53 @@ function AdPerformanceView() {
 
   return (
     <div id="ad-performance-print" className="p-4 sm:p-6 pb-24 lg:pb-6 max-w-6xl mx-auto">
+      {showImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 no-print" onClick={()=>setShowImport(false)}>
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-gray-900 dark:text-white">Import campaigns from Meta</h3>
+                <p className="text-xs text-gray-500">Pull campaigns you built in Ads Manager into the CRM so they track here.</p>
+              </div>
+              <button onClick={()=>setShowImport(false)} className="text-gray-400 hover:text-gray-600"><Ic n="x" cls="w-5 h-5"/></button>
+            </div>
+            <div className="px-5 pb-2">
+              <label className="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Ad account</label>
+              <select value={impAcct} onChange={e=>{ setImpAcct(e.target.value); loadImportCampaigns(e.target.value); }}
+                className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200">
+                {(impAccts.length ? impAccts : [{id:impAcct, name:impAcct}]).map(a=><option key={a.id} value={a.id}>{a.name} ({a.id})</option>)}
+              </select>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-2">
+              {impLoading ? <p className="text-sm text-gray-400 py-8 text-center animate-pulse">Loading campaigns from Meta…</p>
+               : impList.length===0 ? <p className="text-sm text-gray-400 py-8 text-center">No campaigns found in this ad account.</p>
+               : <div className="space-y-1">
+                   {impList.map(c=>{ const exists = existingCampIds.has(String(c.id)); return (
+                     <label key={c.id} className={`flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm ${exists?'opacity-50':'hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer'}`}>
+                       <input type="checkbox" disabled={exists} checked={exists || impSel.has(c.id)}
+                         onChange={()=>setImpSel(s=>{ const n=new Set(s); n.has(c.id)?n.delete(c.id):n.add(c.id); return n; })}
+                         className="w-4 h-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500"/>
+                       <span className="flex-1 min-w-0">
+                         <span className="block truncate text-gray-800 dark:text-gray-200">{c.name}</span>
+                         <span className="text-[11px] text-gray-400">{c.status} · {c.created||'—'}</span>
+                       </span>
+                       {exists && <span className="text-[10px] text-gray-400 flex-shrink-0">in CRM</span>}
+                     </label>); })}
+                 </div>}
+            </div>
+            <div className="flex items-center justify-between gap-2 p-5 pt-3 border-t border-gray-100 dark:border-gray-800">
+              <span className="text-xs text-gray-500">{[...impSel].filter(id=>!existingCampIds.has(String(id))).length} selected</span>
+              <div className="flex gap-2">
+                <button onClick={()=>setShowImport(false)} className="px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300">Cancel</button>
+                <button onClick={doImport} disabled={importing || impLoading}
+                  className="px-4 py-2 text-sm font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white disabled:opacity-50">
+                  {importing ? 'Importing…' : 'Import selected'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header hero */}
       <div className="rounded-3xl bg-gradient-to-br from-[#2E8A97] to-[#3c9ca8] p-5 sm:p-6 mb-5 text-white shadow-sm">
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -13652,6 +13760,12 @@ function AdPerformanceView() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white/10 border border-white/20 text-white hover:bg-white/20 disabled:opacity-50 transition-colors">
             ⬇ Export PDF
           </button>
+          {mktIsAdmin && (
+            <button onClick={openImport}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white/10 border border-white/20 text-white hover:bg-white/20 transition-colors">
+              + Import from Meta
+            </button>
+          )}
           {mktIsAdmin && (
             <button onClick={toggleMyAlerts} title={myAlertsOn?'Marketing alert emails ON — click to mute':'Marketing alert emails OFF — click to enable'}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${myAlertsOn?'bg-white/10 border-white/20 text-white hover:bg-white/20':'bg-transparent border-white/20 text-teal-100/60 hover:bg-white/10'}`}>

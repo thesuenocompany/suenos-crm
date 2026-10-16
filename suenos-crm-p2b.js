@@ -469,6 +469,19 @@ function AdminDashboard() {
     (!fRegion || accInRegion(accById(o.accountId)))
   ), [orders, startMonth, endMonth, fRep, fRegion, accounts]);
 
+  // Cold outreach emails sent (honors date range + region; not rep-specific)
+  const _outreach = state.outreach || [];
+  const _licInfo  = state.licenceInfo || {};
+  const fColdEmails = useMemo(()=> _outreach.filter(m=>{
+    const wasSent = m.sent_at || ['sent','replied','opened'].includes(m.status);
+    if (!wasSent) return false;
+    const day = (m.sent_at||'').slice(0,10);
+    if (day) { if (!inDateRangeDay(day)) return false; }
+    else if (fRange!=='all') return false;
+    if (fRegion && (_licInfo[m.licence_number]?.region) !== fRegion) return false;
+    return true;
+  }), [_outreach, startMonth, endMonth, startDay, endDay, fRegion, fRange, _licInfo]);
+
   // ── Previous period (same length, immediately before current window) ──────────
   const { prevStartMonth, prevEndMonth, prevLabel } = useMemo(()=>{
     const toDate = ym => new Date(ym+'-01');
@@ -697,11 +710,12 @@ function AdminDashboard() {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard label="Visits" value={fVisits.length} sub={rangeLabel} icon="visits" color="blue" onClick={()=>dispatch({type:'NAV',view:'visits'})} trend={trendVisits}/>
         <StatCard label="Bottles" value={totalBottles} sub={rangeLabel} icon="products" color="amber" onClick={()=>dispatch({type:'NAV',view:'orders'})} trend={trendBottles}/>
         <StatCard label="Revenue" value={fmtCurrency(totalRevenue)} sub={rangeLabel} icon="reports" color="emerald" onClick={()=>dispatch({type:'NAV',view:'reports'})} trend={trendRevenue}/>
         <StatCard label="Active Accounts" value={activeAccounts.length} sub={fRegion||'All regions'} icon="accounts" color="purple" onClick={()=>dispatch({type:'NAV',view:'accounts'})} trend={trendAccounts}/>
+        <StatCard label="Cold Emails" value={fColdEmails.length} sub={rangeLabel} icon="mail" color="teal" onClick={()=>dispatch({type:'NAV',view:'outreach'})}/>
       </div>
 
       {/* Charts row */}
