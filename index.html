@@ -844,7 +844,7 @@ async function dbOutreachMarkSent(dispatch, msgObjs, ctx) {
   enrichment.forEach(e => { if (e.licence_number && !enrByLic[e.licence_number]) enrByLic[e.licence_number] = e; });
 
   const localNew = [];   // accounts created in THIS pass, so siblings match instead of duplicating
-  let created = 0, noted = 0;
+  let created = 0, noted = 0, contactsLogged = 0;
   for (const m of objs) {
     try {
       const info  = licenceInfo[m.licence_number] || {};
@@ -884,12 +884,29 @@ async function dbOutreachMarkSent(dispatch, msgObjs, ctx) {
         const mapped = mapAccount(ins);
         dispatch({ type:'ADD_ACCOUNT', payload: mapped });
         localNew.push(mapped);
+        acc = mapped;
         created++;
+      }
+
+      // Log the licensee as a contact under the account (dedup by email).
+      if (acc && email) {
+        const nm = (enr.contact_name || '').trim();
+        const sp = nm.indexOf(' ');
+        try {
+          await sb.from('contacts').upsert({
+            account_id: acc.id, email,
+            first_name: sp>0 ? nm.slice(0,sp) : (nm||null),
+            last_name:  sp>0 ? nm.slice(sp+1) : null,
+            job_title:  enr.contact_title || null,
+            phone:      enr.phone || null,
+          }, { onConflict:'email_norm' });
+          contactsLogged++;
+        } catch(ce) { console.warn('[Outreach→Contact] upsert failed for', email, ce); }
       }
     } catch(err) { console.warn('[Outreach→Account] record failed for message', m.id, err); }
   }
   await dbLoadOutreach(dispatch);
-  return { created, noted };
+  return { created, noted, contacts: contactsLogged };
 }
 // ── VOICE-AGENT CALLS (ElevenLabs/Twilio) ─────────────────────
 // Load recent call logs (admin surfaces them; also used per-account).
@@ -20359,6 +20376,27 @@ function OutreachView() {
   const cnt = st => msgs.filter(m => m.status === st).length;
   const queuedMsgs = msgs.filter(m => m.status === 'queued');
 
+  // ── Cold-email report data (sent = actually emailed) ──
+  const sentMsgs = msgs.filter(m => m.sent_at || ['sent','replied','opened'].includes(m.status));
+  const repRows = sentMsgs.map(m => {
+    const i = infoFor(m.licence_number);
+    return { establishment: i.establishment || `Licence ${m.licence_number}`, licence: m.licence_number,
+      region: i.region || '—', city: i.city || '', email: m.email || '', date: (m.sent_at||'').slice(0,10) };
+  }).sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  const tally = (arr, keyFn) => { const m={}; arr.forEach(x=>{ const k=keyFn(x)||'—'; m[k]=(m[k]||0)+1; }); return Object.entries(m).sort((a,b)=>b[1]-a[1]); };
+  const byRegion = tally(repRows, r=>r.region);
+  const byMonth  = tally(repRows, r=> r.date ? r.date.slice(0,7) : 'Unknown').sort((a,b)=>a[0].localeCompare(b[0]));
+  function exportReportCSV() {
+    const esc = v => { const s=String(v==null?'':v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+    const cols = ['Establishment','Licence #','Region','City','Email','Date sent'];
+    const csv = [cols.join(',')].concat(repRows.map(r=>[r.establishment,r.licence,r.region,r.city,r.email,r.date].map(esc).join(','))).join('\n');
+    const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob); const a=document.createElement('a');
+    a.href=url; a.download=`cold_outreach_${campaign||'all'}_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    showToast(dispatch, `Exported ${repRows.length} sent emails to CSV`);
+  }
+
   // Mark a drafted message as sent — for when you've sent it yourself from your
   // mail drafts folder. Advances it out of "queued" AND records the touch on the
   // matching account (creating a Prospect account if none exists yet).
@@ -20370,6 +20408,7 @@ function OutreachView() {
       const bits = [];
       if (r && r.created) bits.push(`${r.created} prospect${r.created>1?'s':''} created`);
       if (r && r.noted)   bits.push(`${r.noted} logged to account${r.noted>1?'s':''}`);
+      if (r && r.contacts) bits.push(`${r.contacts} contact${r.contacts>1?'s':''} saved`);
       showToast(dispatch, (list.length>1?list.length+' messages':'Message')+' marked sent'+(bits.length?' · '+bits.join(', '):''));
     }
     catch(e) { showToast(dispatch, 'Update failed: '+(e.message||e), 'error'); }
@@ -20463,6 +20502,7 @@ function OutreachView() {
         <div className="flex gap-1.5 mb-4">
           {tabBtn('drafts','Outreach drafts', msgs.length)}
           {tabBtn('enrichment','Enrichment', enrichment.length)}
+          {tabBtn('report','Report', sentMsgs.length)}
         </div>
 
         {tab === 'drafts' && (
@@ -20556,6 +20596,64 @@ function OutreachView() {
                     </tr>);})}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {tab === 'report' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-gray-600 dark:text-gray-300"><b className="text-teal-700 dark:text-teal-400 text-lg">{sentMsgs.length}</b> cold emails sent in <span className="font-medium">{campaign}</span></p>
+              <button onClick={exportReportCSV} disabled={!repRows.length}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-40">
+                ⬇ Export CSV
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Sent over time</p>
+                {byMonth.length===0 ? <p className="text-xs text-gray-400">No sent emails yet.</p> :
+                  byMonth.map(([m,n])=>{ const max=Math.max(...byMonth.map(x=>x[1])); return (
+                    <div key={m} className="flex items-center gap-2 mb-1.5">
+                      <span className="text-xs text-gray-500 w-16 flex-shrink-0">{m}</span>
+                      <div className="flex-1 bg-gray-100 dark:bg-gray-800 rounded h-4 overflow-hidden"><div className="h-4 bg-teal-500" style={{width:`${Math.round(n/max*100)}%`}}/></div>
+                      <span className="text-xs tabular-nums text-gray-600 w-8 text-right">{n}</span>
+                    </div>); })}
+              </div>
+              <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">By region</p>
+                {byRegion.length===0 ? <p className="text-xs text-gray-400">No sent emails yet.</p> :
+                  byRegion.map(([r,n])=>{ const max=Math.max(...byRegion.map(x=>x[1])); return (
+                    <div key={r} className="flex items-center gap-2 mb-1.5">
+                      <span className="text-xs text-gray-500 w-28 flex-shrink-0 truncate">{r}</span>
+                      <div className="flex-1 bg-gray-100 dark:bg-gray-800 rounded h-4 overflow-hidden"><div className="h-4 bg-violet-500" style={{width:`${Math.round(n/max*100)}%`}}/></div>
+                      <span className="text-xs tabular-nums text-gray-600 w-8 text-right">{n}</span>
+                    </div>); })}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
+              <div className="px-4 py-2.5 bg-gray-50 dark:bg-gray-800/50 text-xs text-gray-500">Every business emailed · {repRows.length}</div>
+              <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
+                <table className="w-full">
+                  <thead className="sticky top-0"><tr className="bg-teal-700 text-white">
+                    {['Establishment','Licence #','Region','Email','Date sent'].map(h=>
+                      <th key={h} className="text-[10px] font-bold uppercase tracking-wide px-3 py-2 text-left whitespace-nowrap">{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {repRows.map((r,i)=>(
+                      <tr key={i} className="border-b border-gray-100 dark:border-gray-800">
+                        <td className="px-3 py-2 text-sm text-gray-800 dark:text-gray-200">{r.establishment}</td>
+                        <td className="px-3 py-2 text-xs font-mono text-gray-500">{r.licence}</td>
+                        <td className="px-3 py-2 text-xs text-gray-500">{r.region}</td>
+                        <td className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{r.email || '—'}</td>
+                        <td className="px-3 py-2 text-xs text-gray-400 whitespace-nowrap">{r.date || '—'}</td>
+                      </tr>))}
+                    {repRows.length===0 && <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-gray-400">No cold emails marked sent yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}

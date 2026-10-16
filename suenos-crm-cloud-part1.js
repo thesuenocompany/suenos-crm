@@ -599,7 +599,7 @@ async function dbOutreachMarkSent(dispatch, msgObjs, ctx) {
   enrichment.forEach(e => { if (e.licence_number && !enrByLic[e.licence_number]) enrByLic[e.licence_number] = e; });
 
   const localNew = [];   // accounts created in THIS pass, so siblings match instead of duplicating
-  let created = 0, noted = 0;
+  let created = 0, noted = 0, contactsLogged = 0;
   for (const m of objs) {
     try {
       const info  = licenceInfo[m.licence_number] || {};
@@ -639,12 +639,29 @@ async function dbOutreachMarkSent(dispatch, msgObjs, ctx) {
         const mapped = mapAccount(ins);
         dispatch({ type:'ADD_ACCOUNT', payload: mapped });
         localNew.push(mapped);
+        acc = mapped;
         created++;
+      }
+
+      // Log the licensee as a contact under the account (dedup by email).
+      if (acc && email) {
+        const nm = (enr.contact_name || '').trim();
+        const sp = nm.indexOf(' ');
+        try {
+          await sb.from('contacts').upsert({
+            account_id: acc.id, email,
+            first_name: sp>0 ? nm.slice(0,sp) : (nm||null),
+            last_name:  sp>0 ? nm.slice(sp+1) : null,
+            job_title:  enr.contact_title || null,
+            phone:      enr.phone || null,
+          }, { onConflict:'email_norm' });
+          contactsLogged++;
+        } catch(ce) { console.warn('[Outreach→Contact] upsert failed for', email, ce); }
       }
     } catch(err) { console.warn('[Outreach→Account] record failed for message', m.id, err); }
   }
   await dbLoadOutreach(dispatch);
-  return { created, noted };
+  return { created, noted, contacts: contactsLogged };
 }
 // ── VOICE-AGENT CALLS (ElevenLabs/Twilio) ─────────────────────
 // Load recent call logs (admin surfaces them; also used per-account).
