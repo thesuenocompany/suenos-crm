@@ -13159,6 +13159,7 @@ function AdPerformanceView() {
     finally { setSpotifyRefreshing(false); }
   }
   const [datePreset, setDatePreset] = useState('last_30d');
+  const [showEnded, setShowEnded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingId, setRefreshingId] = useState(null);
   const [didAutoRefresh, setDidAutoRefresh] = useState(false);
@@ -13658,6 +13659,21 @@ function AdPerformanceView() {
   const totalReach       = campaigns.reduce((s,c)=>s+c.reach,0);
   const avgCtr           = totalImpressions > 0 ? (totalClicks/totalImpressions)*100 : 0;
 
+  // Split delivering vs ended/not-delivering so dead campaigns can collapse away.
+  // Meta keeps old campaigns' status ACTIVE, so "delivering" also requires spend
+  // in the selected window (or a future start date = scheduled).
+  const _nowT = Date.now();
+  const isDelivering = (c) => {
+    const eff = effStatusOf(c);
+    const ended = (c.stopTime && new Date(c.stopTime).getTime() < _nowT) || eff === 'COMPLETED';
+    if (ended || eff !== 'ACTIVE') return false;
+    const scheduled = c.startTime && new Date(c.startTime).getTime() > _nowT;
+    return (c.spend || 0) > 0 || scheduled;
+  };
+  const liveCampaigns     = campaigns.filter(isDelivering);
+  const inactiveCampaigns = campaigns.filter(c => !isDelivering(c));
+  const shownCampaigns    = showEnded ? liveCampaigns.concat(inactiveCampaigns) : liveCampaigns;
+
   // Export the page as PDF via the browser's print-to-PDF (vector output, no libraries)
   function exportPdf() {
     const wasDark = document.documentElement.classList.contains('dark');
@@ -13879,7 +13895,18 @@ function AdPerformanceView() {
         </div>
       ) : (
         <div className="space-y-4">
-          {campaigns.map(c => { const eff = effStatusOf(c);
+          {inactiveCampaigns.length > 0 && (
+            <div className="flex items-center justify-between rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 px-4 py-2">
+              <span className="text-xs text-gray-500">{liveCampaigns.length} delivering · {inactiveCampaigns.length} ended / not delivering</span>
+              <button onClick={()=>setShowEnded(v=>!v)} className="text-xs font-semibold text-teal-600 dark:text-teal-400 hover:underline">
+                {showEnded ? '▾ Hide ended / not delivering' : `▸ Show ${inactiveCampaigns.length} ended / not delivering`}
+              </button>
+            </div>
+          )}
+          {liveCampaigns.length === 0 && !showEnded && (
+            <p className="text-sm text-gray-500 text-center py-6">No currently-delivering campaigns{inactiveCampaigns.length?` — ${inactiveCampaigns.length} ended / not delivering are hidden above`:''}.</p>
+          )}
+          {shownCampaigns.map(c => { const eff = effStatusOf(c);
             // A campaign whose flight end-date has passed is NOT running, even if
             // Meta still reports the campaign toggle as ACTIVE — delivery stopped
             // on the schedule. Show "Ended" so the card matches reality.
