@@ -279,7 +279,7 @@ const { useState, useEffect, useReducer, useContext, createContext, useRef, useM
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── CONSTANTS ─────────────────────────────────────────────────
-const REGIONS        = ['Vancouver','Victoria','Kelowna / Okanagan','Fraser Valley','Calgary','Edmonton','Red Deer','Lethbridge'];
+const REGIONS        = ['Vancouver','Victoria','Kelowna / Okanagan','The Kootenays','Fraser Valley','Calgary','Edmonton','Red Deer','Lethbridge'];
 const ACCOUNT_TYPES  = ['Private Liquor Store','Government Liquor Store','Restaurant','Bar','Hotel','Golf Course','Resort','Festival','Event Organizer','Other'];
 const ACCOUNT_STATUSES = ['Prospect','Sample Sent','Buyer Meeting','Listing Pending','Listed','Active','At Risk','Lost'];
 const VISIT_TYPES    = ['Cold Call','Follow Up','Buyer Meeting','Product Sampling','Staff Training','Tasting','Menu Placement','Order Collection','Merchandising'];
@@ -2029,8 +2029,19 @@ const CITY_REGION_MAP = {
   'oliver':'Kelowna / Okanagan','summerland':'Kelowna / Okanagan',
   'peachland':'Kelowna / Okanagan','armstrong':'Kelowna / Okanagan',
   'enderby':'Kelowna / Okanagan','merritt':'Kelowna / Okanagan',
-  'revelstoke':'Kelowna / Okanagan','golden':'Kelowna / Okanagan',
   'chase':'Kelowna / Okanagan','clearwater':'Kelowna / Okanagan',
+  // The Kootenays (East + Central Kootenay, Kootenay Boundary A/B, Columbia-Shuswap A/B)
+  'cranbrook':'The Kootenays','kimberley':'The Kootenays','fernie':'The Kootenays',
+  'sparwood':'The Kootenays','elkford':'The Kootenays','invermere':'The Kootenays',
+  'radium hot springs':'The Kootenays','radium':'The Kootenays',
+  'fairmont hot springs':'The Kootenays','fairmont':'The Kootenays',
+  'panorama':'The Kootenays','canal flats':'The Kootenays',
+  'nelson':'The Kootenays','castlegar':'The Kootenays','creston':'The Kootenays',
+  'kaslo':'The Kootenays','nakusp':'The Kootenays','new denver':'The Kootenays',
+  'silverton':'The Kootenays','slocan':'The Kootenays','salmo':'The Kootenays',
+  'trail':'The Kootenays','rossland':'The Kootenays','warfield':'The Kootenays',
+  'fruitvale':'The Kootenays','montrose':'The Kootenays',
+  'golden':'The Kootenays','revelstoke':'The Kootenays',   // moved out of Kelowna/Okanagan
 };
 
 function cityToRegion(rawCity) {
