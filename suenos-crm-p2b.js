@@ -524,6 +524,7 @@ function AdminDashboard() {
     const p=state.products.find(x=>x.id===o.productId); return s+(o.bottles||0)*(p?.price||0);
   },0);
   const activeAccounts = accounts.filter(a=>(a.status==='Active'||a.status==='Listed')&&accInRegion(a)&&(!fRep||a.assignedRep===fRep));
+  const listedAccounts = accounts.filter(a=>a.status==='Listed'&&accInRegion(a)&&(!fRep||a.assignedRep===fRep));
 
   // ── Previous period derived metrics (for MoM / period-over-period indicators) ─
   const prevOrdersDeduped = prevOrders; // alias kept so downstream refs work
@@ -710,11 +711,12 @@ function AdminDashboard() {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard label="Visits" value={fVisits.length} sub={rangeLabel} icon="visits" color="blue" onClick={()=>dispatch({type:'NAV',view:'visits'})} trend={trendVisits}/>
         <StatCard label="Bottles" value={totalBottles} sub={rangeLabel} icon="products" color="amber" onClick={()=>dispatch({type:'NAV',view:'orders'})} trend={trendBottles}/>
         <StatCard label="Revenue" value={fmtCurrency(totalRevenue)} sub={rangeLabel} icon="reports" color="emerald" onClick={()=>dispatch({type:'NAV',view:'reports'})} trend={trendRevenue}/>
         <StatCard label="Active Accounts" value={activeAccounts.length} sub={fRegion||'All regions'} icon="accounts" color="purple" onClick={()=>dispatch({type:'NAV',view:'accounts'})} trend={trendAccounts}/>
+        <StatCard label="Listed Accounts" value={listedAccounts.length} sub={fRegion||'All regions'} icon="star" color="rose" onClick={()=>dispatch({type:'NAV',view:'accounts'})}/>
         <StatCard label="Cold Emails" value={fColdEmails.length} sub={rangeLabel} icon="mail" color="teal" onClick={()=>dispatch({type:'NAV',view:'outreach'})}/>
       </div>
 

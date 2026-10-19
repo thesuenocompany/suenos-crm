@@ -991,25 +991,70 @@ function ReportsView() {
   // ── Export sales data for a month range (CSV) ──
   const [expFrom, setExpFrom] = useState(()=>{ const d=new Date(); d.setMonth(d.getMonth()-11); return d.toISOString().slice(0,7); });
   const [expTo, setExpTo]     = useState(()=> new Date().toISOString().slice(0,7));
-  function exportSalesCSV() {
+  // Build the detail rows + monthly summary + totals for the selected range.
+  function salesInRange() {
     const from = expFrom, to = expTo;
     const rows = sales.filter(s => (!from || s.month >= from) && (!to || s.month <= to));
-    if (!rows.length) { showToast(dispatch, 'No sales in that range', 'error'); return; }
     const acctById = Object.fromEntries(accounts.map(a=>[a.id,a]));
     const prodById = Object.fromEntries(products.map(p=>[p.id,p]));
     const repById  = Object.fromEntries(users.map(u=>[u.id,u]));
+    const detail = rows.slice()
+      .sort((a,b)=> (a.month||'').localeCompare(b.month||'') || (acctById[a.accountId]?.name||'').localeCompare(acctById[b.accountId]?.name||''))
+      .map(s=>{ const a=acctById[s.accountId]||{}; const p=prodById[s.productId]||{}; const rep=a.assignedRep?repById[a.assignedRep]:null;
+        return { month:s.month||'', account:a.name||'', region:a.region||'', rep:rep?(rep.name||rep.email):'', product:p.name||'', bottles:s.bottles||0, revenue:s.revenue||0 }; });
+    const mMap = {};
+    detail.forEach(d=>{ const m=mMap[d.month]||(mMap[d.month]={bottles:0,revenue:0}); m.bottles+=d.bottles; m.revenue+=d.revenue; });
+    const summary = Object.entries(mMap).sort((a,b)=>a[0].localeCompare(b[0])).map(([month,v])=>({ month, bottles:v.bottles, revenue:v.revenue }));
+    const totals = { bottles: detail.reduce((x,d)=>x+d.bottles,0), revenue: detail.reduce((x,d)=>x+d.revenue,0) };
+    return { detail, summary, totals };
+  }
+  function exportSalesCSV() {
+    const { detail, summary, totals } = salesInRange();
+    if (!detail.length) { showToast(dispatch, 'No sales in that range', 'error'); return; }
     const esc = v => { const s=String(v==null?'':v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
-    const cols = ['Month','Account','Region','Assigned Rep','Product','Bottles','Revenue'];
-    const sorted = rows.slice().sort((a,b)=> (a.month||'').localeCompare(b.month||'') || (acctById[a.accountId]?.name||'').localeCompare(acctById[b.accountId]?.name||''));
-    const csv = [cols.join(',')].concat(sorted.map(s=>{
-      const a=acctById[s.accountId]||{}; const p=prodById[s.productId]||{}; const rep=a.assignedRep?repById[a.assignedRep]:null;
-      return [s.month, a.name||'', a.region||'', rep?(rep.name||rep.email):'', p.name||'', s.bottles||0, s.revenue||0].map(esc).join(',');
-    })).join('\n');
-    const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8' });
+    const lines = [];
+    lines.push(`Sales ${expFrom} to ${expTo}`);
+    lines.push('');
+    lines.push('MONTHLY SUMMARY');
+    lines.push(['Month','Bottles','Revenue'].join(','));
+    summary.forEach(m=>lines.push([m.month, m.bottles, m.revenue].map(esc).join(',')));
+    lines.push(['TOTAL', totals.bottles, totals.revenue].map(esc).join(','));
+    lines.push('');
+    lines.push('DETAIL');
+    lines.push(['Month','Account','Region','Assigned Rep','Product','Bottles','Revenue'].join(','));
+    detail.forEach(d=>lines.push([d.month,d.account,d.region,d.rep,d.product,d.bottles,d.revenue].map(esc).join(',')));
+    const blob = new Blob(['﻿'+lines.join('\n')], { type:'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob); const el = document.createElement('a');
-    el.href = url; el.download = `sales_${from}_to_${to}.csv`; document.body.appendChild(el); el.click(); el.remove(); URL.revokeObjectURL(url);
-    const tb = sorted.reduce((x,s)=>x+(s.bottles||0),0), tr = sorted.reduce((x,s)=>x+(s.revenue||0),0);
-    showToast(dispatch, `Exported ${sorted.length} rows · ${tb.toLocaleString()} bottles · ${fmtCurrency(tr)}`);
+    el.href = url; el.download = `sales_${expFrom}_to_${expTo}.csv`; document.body.appendChild(el); el.click(); el.remove(); URL.revokeObjectURL(url);
+    showToast(dispatch, `Exported ${detail.length} rows · ${totals.bottles.toLocaleString()} bottles · ${fmtCurrency(totals.revenue)}`);
+  }
+  function exportSalesPDF() {
+    const { detail, summary, totals } = salesInRange();
+    if (!detail.length) { showToast(dispatch, 'No sales in that range', 'error'); return; }
+    const h = s => String(s==null?'':s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    const money = n => '$'+Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    const sumRows = summary.map(m=>`<tr><td>${h(m.month)}</td><td class="r">${(m.bottles||0).toLocaleString()}</td><td class="r">${money(m.revenue)}</td></tr>`).join('');
+    const detRows = detail.map(d=>`<tr><td>${h(d.month)}</td><td>${h(d.account)}</td><td>${h(d.region)}</td><td>${h(d.rep)}</td><td>${h(d.product)}</td><td class="r">${(d.bottles||0).toLocaleString()}</td><td class="r">${money(d.revenue)}</td></tr>`).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Sales ${h(expFrom)}–${h(expTo)}</title>
+<style>body{font-family:Helvetica,Arial,sans-serif;color:#1e1e1e;margin:26px;font-size:11px}
+h1{color:#0f766e;margin:0 0 2px;font-size:20px}h2{font-size:13px;margin:16px 0 6px;color:#0f766e}
+.sub{color:#6b6b6b;font-size:11px;margin-bottom:8px}hr{border:none;border-top:2px solid #0d9488;margin:8px 0 12px}
+table{width:100%;border-collapse:collapse;margin-bottom:6px}th{background:#0f766e;color:#fff;text-align:left;padding:5px 7px;font-size:9px}
+td{border:1px solid #d7ece9;padding:4px 7px;font-size:9px}tr:nth-child(even) td{background:#f0faf8}.r{text-align:right}
+tfoot td{font-weight:bold;background:#e6f5f2}@media print{@page{margin:12mm;size:landscape}}</style></head><body>
+<h1>Sueños Tequila — Sales Report</h1>
+<div class="sub">${h(expFrom)} to ${h(expTo)} · ${detail.length} rows · ${totals.bottles.toLocaleString()} bottles · ${money(totals.revenue)} · ${new Date().toLocaleDateString('en-CA')}</div><hr>
+<h2>Monthly summary</h2>
+<table><thead><tr><th>Month</th><th class="r">Bottles</th><th class="r">Revenue</th></tr></thead><tbody>${sumRows}</tbody>
+<tfoot><tr><td>Total</td><td class="r">${totals.bottles.toLocaleString()}</td><td class="r">${money(totals.revenue)}</td></tr></tfoot></table>
+<h2>Detail</h2>
+<table><thead><tr><th>Month</th><th>Account</th><th>Region</th><th>Rep</th><th>Product</th><th class="r">Bottles</th><th class="r">Revenue</th></tr></thead><tbody>${detRows}</tbody></table>
+</body></html>`;
+    const w = window.open('', '_blank', 'width=1000,height=760');
+    if (!w) { showToast(dispatch, 'Allow pop-ups to export the PDF', 'error'); return; }
+    w.document.write(html); w.document.close(); w.focus();
+    setTimeout(()=>{ try { w.print(); } catch(_){} }, 500);
+    showToast(dispatch, `Prepared ${detail.length} rows — use "Save as PDF" in the print dialog`);
   }
   const expInput = "px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200";
 
@@ -1047,7 +1092,11 @@ function ReportsView() {
             className="px-4 py-1.5 text-sm font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white flex items-center gap-1.5">
             <Ic n="download" cls="w-4 h-4"/> Export CSV
           </button>
-          <span className="text-xs text-gray-400 flex-1 min-w-[180px]">Month, account, region, rep, product, bottles, revenue — one row per account/product/month.</span>
+          <button onClick={exportSalesPDF}
+            className="px-4 py-1.5 text-sm font-semibold rounded-lg border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 flex items-center gap-1.5">
+            <Ic n="download" cls="w-4 h-4"/> Export PDF
+          </button>
+          <span className="text-xs text-gray-400 flex-1 min-w-[180px]">Monthly summary + detail (account, region, rep, product, bottles, revenue).</span>
         </div>
       </Card>
 
