@@ -8803,6 +8803,31 @@ function ReportsView() {
   const { state, dispatch } = useApp();
   const { sales, accounts, visits, users, products } = state;
 
+  // ── Export sales data for a month range (CSV) ──
+  const [expFrom, setExpFrom] = useState(()=>{ const d=new Date(); d.setMonth(d.getMonth()-11); return d.toISOString().slice(0,7); });
+  const [expTo, setExpTo]     = useState(()=> new Date().toISOString().slice(0,7));
+  function exportSalesCSV() {
+    const from = expFrom, to = expTo;
+    const rows = sales.filter(s => (!from || s.month >= from) && (!to || s.month <= to));
+    if (!rows.length) { showToast(dispatch, 'No sales in that range', 'error'); return; }
+    const acctById = Object.fromEntries(accounts.map(a=>[a.id,a]));
+    const prodById = Object.fromEntries(products.map(p=>[p.id,p]));
+    const repById  = Object.fromEntries(users.map(u=>[u.id,u]));
+    const esc = v => { const s=String(v==null?'':v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+    const cols = ['Month','Account','Region','Assigned Rep','Product','Bottles','Revenue'];
+    const sorted = rows.slice().sort((a,b)=> (a.month||'').localeCompare(b.month||'') || (acctById[a.accountId]?.name||'').localeCompare(acctById[b.accountId]?.name||''));
+    const csv = [cols.join(',')].concat(sorted.map(s=>{
+      const a=acctById[s.accountId]||{}; const p=prodById[s.productId]||{}; const rep=a.assignedRep?repById[a.assignedRep]:null;
+      return [s.month, a.name||'', a.region||'', rep?(rep.name||rep.email):'', p.name||'', s.bottles||0, s.revenue||0].map(esc).join(',');
+    })).join('\n');
+    const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob); const el = document.createElement('a');
+    el.href = url; el.download = `sales_${from}_to_${to}.csv`; document.body.appendChild(el); el.click(); el.remove(); URL.revokeObjectURL(url);
+    const tb = sorted.reduce((x,s)=>x+(s.bottles||0),0), tr = sorted.reduce((x,s)=>x+(s.revenue||0),0);
+    showToast(dispatch, `Exported ${sorted.length} rows · ${tb.toLocaleString()} bottles · ${fmtCurrency(tr)}`);
+  }
+  const expInput = "px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200";
+
   const _regionNames = (state.regions?.length?state.regions.map(r=>r.name):REGIONS);
   const byRegion = _regionNames.map(r=>({ name:r.split('/')[0].trim().slice(0,9), region:r, bottles:sales.filter(s=>accounts.find(a=>a.id===s.accountId)?.region===r).reduce((s,x)=>s+x.bottles,0) })).filter(r=>r.bottles>0).sort((a,b)=>b.bottles-a.bottles).slice(0,7);
   const PCOLS = ['#f59e0b','#10b981','#3b82f6','#8b5cf6'];
@@ -8823,6 +8848,24 @@ function ReportsView() {
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-5xl mx-auto pb-24 lg:pb-6">
+      <Card cls="p-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Export sales — from</label>
+            <input type="month" value={expFrom} max={expTo} onChange={e=>setExpFrom(e.target.value)} className={expInput}/>
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold uppercase text-gray-400 mb-1">To</label>
+            <input type="month" value={expTo} min={expFrom} onChange={e=>setExpTo(e.target.value)} className={expInput}/>
+          </div>
+          <button onClick={exportSalesCSV}
+            className="px-4 py-1.5 text-sm font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white flex items-center gap-1.5">
+            <Ic n="download" cls="w-4 h-4"/> Export CSV
+          </button>
+          <span className="text-xs text-gray-400 flex-1 min-w-[180px]">Month, account, region, rep, product, bottles, revenue — one row per account/product/month.</span>
+        </div>
+      </Card>
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard label="Total Bottles" value={totalBottles} icon="products" color="amber"/>
         <StatCard label="Total Revenue" value={fmtCurrency(totalRevenue)} icon="reports" color="emerald"/>
